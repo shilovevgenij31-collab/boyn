@@ -2,9 +2,13 @@ import type { Category } from "@/core/domain/category";
 
 /**
  * Seed hashtags used to bootstrap hashtag discovery (from Phase 5 onward).
- * This is data, not logic — tracking-tier lifecycle (promotion/demotion
- * between CORE/ACTIVE/EXPLORATION/DORMANT) is implemented in
- * core/lifecycle in Phase 6 and consumes this list; it isn't defined here.
+ * This is data, not logic — tracking-tier lifecycle *transitions*
+ * (promotion/demotion between CORE/ACTIVE/EXPLORATION/DORMANT) are
+ * implemented in core/lifecycle in Phase 6 and consume this list; only
+ * each seed's *initial* tier is decided here, matching
+ * docs/IMPLEMENTATION_PLAN.md §11's LEAN CORE list exactly (Phase 3 uses
+ * this to seed src/db/seed.ts — see ADR there for why CORE is a small
+ * subset rather than every seed tag).
  *
  * English-first for the "global" market (see docs/IMPLEMENTATION_PLAN.md
  * ADR-020). Additional markets/languages extend this list later without a
@@ -13,41 +17,46 @@ import type { Category } from "@/core/domain/category";
 export interface SeedHashtag {
   tag: string;
   categories: Category[];
+  /** CORE: always checked, tightest schedule. DORMANT: seeded but
+   * low-priority until it earns promotion like any discovered tag (see
+   * plan §11) — weekly probes only. No seed starts ACTIVE/EXPLORATION;
+   * those states are earned, not assigned. */
+  initialTier: "CORE" | "DORMANT";
 }
 
 export const SEED_HASHTAGS: SeedHashtag[] = [
   // Cosplay
-  { tag: "cosplay", categories: ["cosplay"] },
-  { tag: "cosplayer", categories: ["cosplay"] },
-  { tag: "cosplaygirl", categories: ["cosplay"] },
-  { tag: "cosplayvideo", categories: ["cosplay"] },
-  { tag: "animecosplay", categories: ["cosplay"] },
-  { tag: "gamingcosplay", categories: ["cosplay", "gaming"] },
+  { tag: "cosplay", categories: ["cosplay"], initialTier: "CORE" },
+  { tag: "cosplayer", categories: ["cosplay"], initialTier: "CORE" },
+  { tag: "cosplaygirl", categories: ["cosplay"], initialTier: "DORMANT" },
+  { tag: "cosplayvideo", categories: ["cosplay"], initialTier: "DORMANT" },
+  { tag: "animecosplay", categories: ["cosplay"], initialTier: "DORMANT" },
+  { tag: "gamingcosplay", categories: ["cosplay", "gaming"], initialTier: "DORMANT" },
 
   // Streaming
-  { tag: "streamer", categories: ["streaming"] },
-  { tag: "streaming", categories: ["streaming"] },
-  { tag: "twitch", categories: ["streaming"] },
-  { tag: "twitchstreamer", categories: ["streaming"] },
+  { tag: "streamer", categories: ["streaming"], initialTier: "CORE" },
+  { tag: "streaming", categories: ["streaming"], initialTier: "DORMANT" },
+  { tag: "twitch", categories: ["streaming"], initialTier: "DORMANT" },
+  { tag: "twitchstreamer", categories: ["streaming"], initialTier: "CORE" },
 
   // Gaming (general)
-  { tag: "gaming", categories: ["gaming"] },
-  { tag: "gamer", categories: ["gaming"] },
-  { tag: "videogames", categories: ["gaming"] },
-  { tag: "gameplay", categories: ["gaming"] },
-  { tag: "gamingcommunity", categories: ["gaming"] },
+  { tag: "gaming", categories: ["gaming"], initialTier: "CORE" },
+  { tag: "gamer", categories: ["gaming"], initialTier: "DORMANT" },
+  { tag: "videogames", categories: ["gaming"], initialTier: "DORMANT" },
+  { tag: "gameplay", categories: ["gaming"], initialTier: "DORMANT" },
+  { tag: "gamingcommunity", categories: ["gaming"], initialTier: "DORMANT" },
 
   // PC gaming
-  { tag: "pcgaming", categories: ["pc"] },
-  { tag: "pcgamer", categories: ["pc"] },
-  { tag: "gamingpc", categories: ["pc"] },
-  { tag: "pcbuild", categories: ["pc"] },
-  { tag: "steam", categories: ["pc"] },
+  { tag: "pcgaming", categories: ["pc"], initialTier: "CORE" },
+  { tag: "pcgamer", categories: ["pc"], initialTier: "DORMANT" },
+  { tag: "gamingpc", categories: ["pc"], initialTier: "DORMANT" },
+  { tag: "pcbuild", categories: ["pc"], initialTier: "DORMANT" },
+  { tag: "steam", categories: ["pc"], initialTier: "DORMANT" },
 
   // PlayStation
-  { tag: "playstation", categories: ["playstation"] },
-  { tag: "ps5", categories: ["playstation"] },
-  { tag: "playstation5", categories: ["playstation"] },
-  { tag: "ps5games", categories: ["playstation"] },
-  { tag: "psgaming", categories: ["playstation"] },
+  { tag: "playstation", categories: ["playstation"], initialTier: "CORE" },
+  { tag: "ps5", categories: ["playstation"], initialTier: "CORE" },
+  { tag: "playstation5", categories: ["playstation"], initialTier: "DORMANT" },
+  { tag: "ps5games", categories: ["playstation"], initialTier: "DORMANT" },
+  { tag: "psgaming", categories: ["playstation"], initialTier: "DORMANT" },
 ];
