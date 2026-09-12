@@ -7,6 +7,8 @@
  * enum (src/core/domain/provider.ts) — nothing should ever write it to
  * provider_jobs.provider.
  */
+import type { Clock } from "@/lib/clock.ts";
+import { systemClock } from "@/lib/clock.ts";
 import { ProviderError } from "../errors.ts";
 import type {
   DiscoveryJobInput,
@@ -34,6 +36,11 @@ export interface FixtureProviderConfig {
   /** Queue of plans consumed in order, one per submitDiscovery/submitRefresh
    * call. Running out of planned jobs is a test bug, not silently handled. */
   jobs: FixtureJobPlan[];
+  /** Injected so a deterministic offline simulation (Phase 5 brief §38) can
+   * run several *simulated* days without `submittedAt` drifting to the
+   * real wall clock — defaults to the real clock so Phase 4's existing
+   * tests (which never assert on exact timestamps) are unaffected. */
+  clock?: Clock;
 }
 
 interface FixtureJobState {
@@ -51,10 +58,12 @@ export class FixtureProvider implements SocialDataProvider {
 
   private readonly plannedJobs: FixtureJobPlan[];
   private readonly jobs = new Map<string, FixtureJobState>();
+  private readonly clock: Clock;
   private nextJobId = 1;
 
   constructor(private readonly config: FixtureProviderConfig) {
     this.plannedJobs = [...config.jobs];
+    this.clock = config.clock ?? systemClock;
   }
 
   capabilities(): ProviderCapabilities {
@@ -71,7 +80,7 @@ export class FixtureProvider implements SocialDataProvider {
     }
     const externalJobId = `fixture-job-${this.nextJobId++}`;
     this.jobs.set(externalJobId, { plan, pollCount: 0 });
-    return { externalJobId, submittedAt: new Date() };
+    return { externalJobId, submittedAt: this.clock.now() };
   }
 
   async submitDiscovery(input: DiscoveryJobInput): Promise<SubmittedProviderJob> {

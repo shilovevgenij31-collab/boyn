@@ -19,3 +19,17 @@ export async function setSetting(db: Database, key: string, value: unknown, upda
       set: { value: sql.raw('excluded."value"'), updatedAt: sql.raw('excluded."updated_at"') },
     });
 }
+
+const COLLECTION_PAUSED_KEY = "collection_paused";
+
+/** Operational pause (Phase 5 brief §55): while paused, the tick still
+ * reconciles (polls/ingests) already-running provider jobs, but plans no
+ * new discovery/refresh work. Defaults to false — an unset key is not a
+ * paused state. */
+export async function isCollectionPaused(db: Database): Promise<boolean> {
+  return (await getSetting<boolean>(db, COLLECTION_PAUSED_KEY)) ?? false;
+}
+
+export async function setCollectionPaused(db: Database, paused: boolean, now: Date): Promise<void> {
+  await setSetting(db, COLLECTION_PAUSED_KEY, paused, now);
+}

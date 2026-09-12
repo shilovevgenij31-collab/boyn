@@ -1,0 +1,249 @@
+/**
+ * Phase 5 deliverable (brief §38-39, §58): a deterministic, fully offline
+ * multi-day simulation of the tick pipeline — FixtureProvider, PGlite, an
+ * injected FixedClock, no network, no secrets. Exported as a plain
+ * function so both scripts/simulate.ts (CLI, prints a summary) and
+ * test/integration/simulation.test.ts (asserts on it) drive the exact
+ * same engine.
+ *
+ * Deliberately TikTok-only taxonomy: FixtureProvider's job queue is a flat
+ * FIFO consumed by whichever call (discovery or refresh, any platform)
+ * happens to run next, so a shared apify instance serving both TikTok and
+ * Instagram discovery would need queue entries interleaved in an order
+ * this script can't fully predict (real due-tag selection decides it).
+ * Restricting the simulated taxonomy to TikTok keeps every consumed item
+ * exactly the shape the caller expects. Instagram's own path (primary-
+ * only, no fallback) is already covered by real integration tests
+ * (test/integration/jobs-tick.test.ts, tests G/O) — this script's job is
+ * to prove the multi-tick state machine, not re-prove per-platform
+ * routing.
+ */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
+import { eq, sql } from "drizzle-orm";
+import * as schema from "@/db/schema.ts";
+import { collectionRuns, hashtags, postSnapshots, posts, providerJobs, quarantinedItems } from "@/db/schema.ts";
+import { upsertHashtag } from "@/db/repositories/hashtags.ts";
+import { ensureTrackedHashtag } from "@/db/repositories/tracking.ts";
+import { FixedClock } from "@/lib/clock.ts";
+import { Deadline } from "@/lib/deadline.ts";
+import { GLOBAL_MARKET } from "@/core/domain/market.ts";
+import { FixtureProvider, type FixtureJobPlan } from "@/providers/fixture/provider.ts";
+import { CircuitBreaker } from "@/providers/circuit-breaker.ts";
+import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
+import { DEFAULT_REGISTRY_CONFIG, ProviderRegistry } from "@/providers/registry.ts";
+import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
+import { runTick } from "@/jobs/tick.ts";
+import type { TickContext, TickResult } from "@/jobs/types.ts";
+
+type TestDatabase = PgliteDatabase<typeof schema>;
+
+const FIXTURES_ROOT = resolve(process.cwd(), "test/fixtures");
+function loadFixture(relativePath: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(resolve(FIXTURES_ROOT, relativePath), "utf8"));
+}
+
+function wrapFixtureAsProvider(id: "apify" | "brightdata", fixture: FixtureProvider): SocialDataProvider {
+  return {
+    id,
+    capabilities: () => fixture.capabilities(),
+    submitDiscovery: (input) => fixture.submitDiscovery(input),
+    submitRefresh: (input) => fixture.submitRefresh(input),
+    getStatus: (externalJobId) => fixture.getStatus(externalJobId),
+    fetchResults: (externalJobId) => fixture.fetchResults(externalJobId),
+    cancel: (externalJobId) => fixture.cancel(externalJobId),
+  };
+}
+
+export interface SimulationOptions {
+  days?: number;
+  tickIntervalMinutes?: number;
+  startAt?: Date;
+}
+
+export interface SimulationSummary {
+  ticks: number;
+  collectionRuns: number;
+  runsByStatus: Record<string, number>;
+  providerJobsCreated: number;
+  jobsByStatus: Record<string, number>;
+  postsPersisted: number;
+  distinctHashtagsTracked: number;
+  snapshotsTotal: number;
+  refreshSnapshots: number;
+  quarantinedItemCount: number;
+  partialRunOccurred: boolean;
+  delayedJobCompletedAcrossTicks: boolean;
+  replay: { jobsBeforeReplay: number; jobsAfterReplay: number; noDuplicatesCreated: boolean };
+  offlineOnly: true;
+}
+
+/** A large, deliberately over-provisioned pool so the queue never
+ * exhausts unexpectedly across 144+ ticks — running out is a script bug,
+ * not something to paper over (see FixtureProvider's own module comment). */
+function buildApifyDiscoveryPlans(): FixtureJobPlan[] {
+  const search = [1, 2, 3, 4, 5].map((n) => loadFixture(`apify/tiktok/search-${n}.json`));
+  const plans: FixtureJobPlan[] = [
+    // Index 0: one injected provider failure (brief §38) — this is
+    // deliberately the very FIRST submission the simulation will ever
+    // make (tick 0's discovery run), so its outcome is deterministic
+    // regardless of due-tag/refresh timing elsewhere. Submits fine, but
+    // the vendor reports FAILED on the first poll (tick 1).
+    { runningPolls: 5, failAfter: 1, items: [] },
+    // Index 1: consumed by the SAME run's same-run retry (plan-discovery
+    // .ts's MAX_JOB_ATTEMPTS_PER_RUN logic, tick 1) — one deliberately
+    // delayed job (brief §38): needs 2 polls (2 real ticks, 30 min apart)
+    // before READY, demonstrating a job that spans multiple ticks. Its
+    // eventual success alongside index 0's failure is what makes that
+    // run's finalize-runs.ts outcome genuinely PARTIAL, not just FAILED.
+    { runningPolls: 1, items: [search[0]!] },
+  ];
+
+  for (let i = 0; i < 250; i++) {
+    plans.push({ runningPolls: 0, items: [search[i % search.length]!] });
+  }
+  return plans;
+}
+
+function buildBrightDataFallbackPlans(): FixtureJobPlan[] {
+  const sample = [1, 2, 3, 4, 5].map((n) => loadFixture(`brightdata/tiktok/sample-1b-${n}.json`));
+  return Array.from({ length: 50 }, (_, i) => ({ runningPolls: 0, items: [sample[i % sample.length]!] }));
+}
+
+async function seedSimulationTaxonomy(db: TestDatabase, now: Date): Promise<void> {
+  const seeds: { tag: string; tier: "CORE" | "ACTIVE" | "EXPLORATION" | "DORMANT" }[] = [
+    { tag: "cosplay", tier: "CORE" },
+    { tag: "gaming", tier: "CORE" },
+    { tag: "streamer", tier: "ACTIVE" },
+    { tag: "pcgaming", tier: "EXPLORATION" },
+    { tag: "playstation", tier: "DORMANT" },
+  ];
+  for (const seed of seeds) {
+    const hashtagId = await upsertHashtag(db, seed.tag, now);
+    await ensureTrackedHashtag(db, { hashtagId, platform: "tiktok", market: GLOBAL_MARKET, tier: seed.tier, source: "SEED" });
+  }
+}
+
+async function countByStatus(db: TestDatabase, table: typeof providerJobs | typeof collectionRuns): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ status: table.status, count: sql<string>`count(*)` })
+    .from(table as typeof providerJobs)
+    .groupBy(table.status);
+  const result: Record<string, number> = {};
+  for (const row of rows) result[row.status] = Number(row.count);
+  return result;
+}
+
+export async function runSimulation(options: SimulationOptions = {}): Promise<SimulationSummary> {
+  const days = options.days ?? 3;
+  const tickIntervalMinutes = options.tickIntervalMinutes ?? 30;
+  const totalTicks = Math.round((days * 24 * 60) / tickIntervalMinutes);
+
+  const client = new PGlite();
+  const db = drizzle(client, { schema });
+  await migrate(db, { migrationsFolder: resolve(process.cwd(), "drizzle") });
+
+  const clock = new FixedClock(options.startAt ?? new Date("2026-09-12T20:00:00.000Z"));
+  await seedSimulationTaxonomy(db, clock.now());
+
+  const apifyFixture = new FixtureProvider({ clock, jobs: buildApifyDiscoveryPlans() });
+  const brightdataFixture = new FixtureProvider({ clock, jobs: buildBrightDataFallbackPlans() });
+  const providers: Partial<Record<RuntimeProviderId, SocialDataProvider>> = {
+    apify: wrapFixtureAsProvider("apify", apifyFixture),
+    brightdata: wrapFixtureAsProvider("brightdata", brightdataFixture),
+  };
+  const registry = new ProviderRegistry(providers, DEFAULT_REGISTRY_CONFIG);
+  const circuitBreaker = new CircuitBreaker(new DbCircuitBreakerStore(db), clock);
+
+  function buildTickContext(): TickContext {
+    return {
+      db,
+      providers: registry,
+      circuitBreaker,
+      clock,
+      // A fresh Deadline per tick, generous enough never to trip in this
+      // offline simulation — mirrors jobs/build-context.ts's real
+      // per-invocation construction, just with a larger budget since
+      // there's no Vercel wall-clock limit here.
+      deadline: new Deadline(10 * 60_000, clock),
+      market: GLOBAL_MARKET,
+      budgetProfile: "STANDARD",
+    };
+  }
+
+  const tickResults: TickResult[] = [];
+  let replaySummary: SimulationSummary["replay"] = { jobsBeforeReplay: 0, jobsAfterReplay: 0, noDuplicatesCreated: true };
+
+  for (let tick = 0; tick < totalTicks; tick++) {
+    const result = await runTick(buildTickContext());
+    tickResults.push(result);
+
+    // Replay of at least one tick (brief §38): re-run the SAME tick at the
+    // SAME simulated instant, without advancing the clock, and confirm it
+    // creates no duplicate provider_jobs.
+    if (tick === 20) {
+      const beforeRows = await db.select({ count: sql<string>`count(*)` }).from(providerJobs);
+      const before = Number(beforeRows[0]?.count ?? "0");
+      await runTick(buildTickContext());
+      const afterRows = await db.select({ count: sql<string>`count(*)` }).from(providerJobs);
+      const after = Number(afterRows[0]?.count ?? "0");
+      replaySummary = { jobsBeforeReplay: before, jobsAfterReplay: after, noDuplicatesCreated: before === after };
+    }
+
+    clock.advanceMs(tickIntervalMinutes * 60_000);
+  }
+
+  async function countAll(rows: Promise<{ count: string }[]>): Promise<number> {
+    const result = await rows;
+    return Number(result[0]?.count ?? "0");
+  }
+
+  const postsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(posts));
+  const hashtagsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(hashtags));
+  const snapshotsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(postSnapshots));
+  const refreshSnapshotsCount = await countAll(
+    db.select({ count: sql<string>`count(*)` }).from(postSnapshots).where(eq(postSnapshots.source, "REFRESH")),
+  );
+  const quarantineCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(quarantinedItems));
+  const runsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(collectionRuns));
+  const jobsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(providerJobs));
+
+  const runsByStatus = await countByStatus(db, collectionRuns);
+  const jobsByStatus = await countByStatus(db, providerJobs);
+
+  const delayedJobRows = await db
+    .select({ submittedAt: providerJobs.submittedAt, completedAt: providerJobs.completedAt })
+    .from(providerJobs)
+    .where(eq(providerJobs.status, "INGESTED"));
+  // The deliberately-delayed job (index 1 in buildApifyDiscoveryPlans)
+  // needs 2 polls, i.e. at least 2 tick cycles (~60 min at the default
+  // 30 min cadence) between submission and completion — comfortably more
+  // than a same-tick completion (0), so this threshold cleanly
+  // distinguishes "took multiple ticks" from "finished immediately".
+  const MULTI_TICK_THRESHOLD_MS = 45 * 60_000;
+  const delayedJobCompletedAcrossTicks = delayedJobRows.some(
+    (r) => r.submittedAt && r.completedAt && r.completedAt.getTime() - r.submittedAt.getTime() >= MULTI_TICK_THRESHOLD_MS,
+  );
+
+  await client.close();
+
+  return {
+    ticks: totalTicks,
+    collectionRuns: Number(runsCount),
+    runsByStatus,
+    providerJobsCreated: Number(jobsCount),
+    jobsByStatus,
+    postsPersisted: Number(postsCount),
+    distinctHashtagsTracked: Number(hashtagsCount),
+    snapshotsTotal: Number(snapshotsCount),
+    refreshSnapshots: Number(refreshSnapshotsCount),
+    quarantinedItemCount: Number(quarantineCount),
+    partialRunOccurred: (runsByStatus.PARTIAL ?? 0) > 0,
+    delayedJobCompletedAcrossTicks,
+    replay: replaySummary,
+    offlineOnly: true,
+  };
+}

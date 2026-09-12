@@ -71,6 +71,14 @@ export class ProviderRegistry {
     return provider;
   }
 
+  /** Direct lookup by a specific, already-decided provider id — no
+   * routing/fallback logic. Used by the submit phase (Phase 5), which
+   * already knows which provider a planned job was persisted against and
+   * just needs the instance to call. */
+  getById(id: ProviderId): SocialDataProvider {
+    return this.getProviderInstance(id);
+  }
+
   private assertSupports(provider: SocialDataProvider, platform: Platform, operation: ProviderOperation): void {
     const cap = provider.capabilities()[platform];
     const supported = operation === "DISCOVERY" ? cap.discovery : cap.refreshByUrl;
@@ -119,25 +127,58 @@ export class ProviderRegistry {
    * else fallback under the same condition, else throws. Doesn't itself
    * record success/failure — the caller does that around the actual
    * submit call (this only decides which provider to try).
+   *
+   * Deliberately does NOT call `resolve()` (which eagerly instantiates
+   * BOTH primary and fallback to validate the full routing table): a
+   * deploy that only has Apify credentials configured, with Bright Data
+   * genuinely absent (not misconfigured — just not set up), must still be
+   * able to use a healthy Apify primary. The fallback instance is only
+   * looked up — and only then required to exist — once the primary is
+   * actually found unavailable.
    */
   async resolveAvailable(
     platform: Platform,
     operation: ProviderOperation,
     circuitBreaker: CircuitBreaker,
   ): Promise<SocialDataProvider> {
-    const { primary, fallback } = this.resolve(platform, operation);
+    const primaryId = this.primaryProviderId(platform, operation);
+    const primary = this.getProviderInstance(primaryId);
+    this.assertSupports(primary, platform, operation);
 
     if (await circuitBreaker.isAvailable({ provider: primary.id as ProviderId, platform, operation })) {
       return primary;
     }
-    if (fallback && (await circuitBreaker.isAvailable({ provider: fallback.id as ProviderId, platform, operation }))) {
-      return fallback;
+
+    const fallbackId = this.fallbackProviderId(platform, operation);
+    if (fallbackId) {
+      const fallback = this.getProviderInstance(fallbackId);
+      this.assertSupports(fallback, platform, operation);
+      if (await circuitBreaker.isAvailable({ provider: fallback.id as ProviderId, platform, operation })) {
+        return fallback;
+      }
     }
+
     throw new ProviderError(
       "UPSTREAM",
       "registry",
       operation,
-      `no available provider for ${platform} ${operation}: primary (${primary.id}) circuit open${fallback ? `, fallback (${fallback.id}) circuit open` : ", no fallback configured"}`,
+      `no available provider for ${platform} ${operation}: primary (${primary.id}) circuit open${fallbackId ? `, fallback (${fallbackId}) circuit open` : ", no fallback configured"}`,
     );
+  }
+
+  private primaryProviderId(platform: Platform, operation: ProviderOperation): ProviderId {
+    if (operation === "REFRESH") {
+      const primaryId = REFRESH_PROVIDER[platform];
+      if (!primaryId) {
+        throw new ProviderError("UNSUPPORTED", "registry", "REFRESH", `refresh is not supported for ${platform}`);
+      }
+      return primaryId;
+    }
+    return platform === "tiktok" ? this.config.tiktokDiscoveryPrimary : this.config.instagramDiscoveryPrimary;
+  }
+
+  private fallbackProviderId(platform: Platform, operation: ProviderOperation): ProviderId | null {
+    if (operation === "REFRESH") return null;
+    return platform === "tiktok" ? this.config.tiktokDiscoveryFallback : this.config.instagramDiscoveryFallback;
   }
 }

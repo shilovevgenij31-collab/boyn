@@ -1,8 +1,10 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { Database } from "@/db/client.ts";
 import { postDiscoveries, postHashtags, posts, postSnapshots } from "@/db/schema.ts";
 import type { NormalizedPost } from "@/core/domain/social-post.ts";
+import type { RefreshCandidate } from "@/core/scheduling/refresh-planner.ts";
+import { REFRESH_CONFIG } from "@/config/schedule.ts";
 import { upsertHashtags } from "./hashtags.ts";
 
 /** References the proposed-insert row's column inside an `ON CONFLICT DO
@@ -300,4 +302,65 @@ export async function persistNormalizedObservation(
 
     return { postId, wasNewPost, snapshotInserted, hashtagIds };
   });
+}
+
+/**
+ * Candidate rows for TikTok refresh planning (Phase 5 brief §28-30) — a
+ * broad, cheap SQL pre-filter (platform, availability, age, view count,
+ * refresh-count cap); the precise due/eligible decision is
+ * `core/scheduling/refresh-planner.ts`'s `isRefreshDue`, kept here only to
+ * bound how many rows come back. Instagram is never queried by callers —
+ * there is no refresh provider for it (Phase 4 ADR-024).
+ */
+export async function getRefreshCandidatePosts(db: Database, now: Date, limit: number): Promise<RefreshCandidateWithUrl[]> {
+  const minPublishedAt = new Date(now.getTime() - REFRESH_CONFIG.maxAgeHours * 3_600_000);
+  const rows = await db
+    .select({
+      postId: posts.id,
+      publishedAt: posts.publishedAt,
+      views: posts.views,
+      paidRefreshCount: posts.paidRefreshCount,
+      nextRefreshAt: posts.nextRefreshAt,
+      availability: posts.availability,
+      canonicalUrl: posts.canonicalUrl,
+      externalId: posts.externalId,
+    })
+    .from(posts)
+    .where(
+      and(
+        eq(posts.platform, "tiktok"),
+        eq(posts.availability, "ACTIVE"),
+        gte(posts.publishedAt, minPublishedAt),
+        gte(posts.views, REFRESH_CONFIG.minViews),
+        sql`${posts.paidRefreshCount} < ${REFRESH_CONFIG.maxPaidRefreshCount}`,
+        or(isNull(posts.nextRefreshAt), lte(posts.nextRefreshAt, now)),
+      ),
+    )
+    .orderBy(sql`${posts.nextRefreshAt} nulls first`)
+    .limit(limit);
+  return rows;
+}
+
+/** Same shape as getRefreshCandidatePosts's rows plus the fields refresh
+ * planning needs to build a provider request (canonicalUrl/externalId),
+ * kept as a distinct exported type so callers don't reach into Drizzle's
+ * inferred row shape directly. */
+export interface RefreshCandidateWithUrl extends RefreshCandidate {
+  canonicalUrl: string;
+  externalId: string;
+}
+
+export async function recordRefreshCompletion(
+  db: Database,
+  postId: number,
+  params: { refreshedAt: Date; nextRefreshAt: Date | null },
+): Promise<void> {
+  await db
+    .update(posts)
+    .set({
+      lastRefreshedAt: params.refreshedAt,
+      paidRefreshCount: sql`${posts.paidRefreshCount} + 1`,
+      nextRefreshAt: params.nextRefreshAt,
+    })
+    .where(eq(posts.id, postId));
 }

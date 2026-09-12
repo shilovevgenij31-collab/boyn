@@ -42,6 +42,9 @@ const envSchema = z.object({
   // ---- Scheduling / webhooks — Phase 5 ----------------------------------
   CRON_SECRET: z.string().min(1).optional(),
   PROVIDER_WEBHOOK_SECRET: z.string().min(1).optional(),
+  // Overrides config/schedule.ts's DEFAULT_TICK_DEADLINE_MS if the deploy
+  // needs a different per-tick time budget.
+  TICK_DEADLINE_MS: z.string().regex(/^\d+$/, "must be an integer number of milliseconds").optional(),
 
   // ---- Social data providers — Phase 4 (routing decided in Phase 1) -----
   BRIGHTDATA_API_TOKEN: z.string().min(1).optional(),

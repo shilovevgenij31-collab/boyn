@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import { collectionRuns, providerJobs } from "@/db/schema.ts";
 import type { ProviderId } from "@/core/domain/provider.ts";
@@ -95,6 +95,57 @@ export interface UsageTotals {
  * (never actually submitted) is naturally excluded by the `>=` filter,
  * which is correct: nothing was sent, nothing should count.
  */
+export type CollectionRunStatus = "PLANNED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED" | "SKIPPED";
+
+/** Idempotent: only a PLANNED run transitions to RUNNING; a run already
+ * RUNNING (a later tick continuing the same multi-tick run, Phase 5 brief
+ * §34) is left untouched rather than re-stamping startedAt. */
+export async function startCollectionRun(db: Database, id: number, now: Date): Promise<void> {
+  await db
+    .update(collectionRuns)
+    .set({ status: "RUNNING", startedAt: now })
+    .where(and(eq(collectionRuns.id, id), eq(collectionRuns.status, "PLANNED")));
+}
+
+export interface FinalizeCollectionRunParams {
+  status: "COMPLETED" | "PARTIAL" | "FAILED" | "SKIPPED";
+  now: Date;
+  recordsUsed?: number;
+  stats?: Record<string, unknown>;
+  errorSummary?: string | null;
+}
+
+export async function finalizeCollectionRun(db: Database, id: number, params: FinalizeCollectionRunParams): Promise<void> {
+  await db
+    .update(collectionRuns)
+    .set({
+      status: params.status,
+      finishedAt: params.now,
+      recordsUsed: params.recordsUsed,
+      stats: params.stats ?? null,
+      errorSummary: params.errorSummary ?? null,
+    })
+    .where(eq(collectionRuns.id, id));
+}
+
+export interface OpenCollectionRun {
+  id: number;
+  kind: "DISCOVERY" | "REFRESH" | "MANUAL";
+  status: CollectionRunStatus;
+}
+
+/** Runs not yet in a terminal state — candidates for the finalize phase
+ * (Phase 5 brief §32-34) to check whether all their provider_jobs are now
+ * terminal and, if so, close them out. A run can legitimately stay open
+ * across many ticks while a slow job (Bright Data) is still in flight. */
+export async function getOpenCollectionRuns(db: Database, limit: number): Promise<OpenCollectionRun[]> {
+  return db
+    .select({ id: collectionRuns.id, kind: collectionRuns.kind, status: collectionRuns.status })
+    .from(collectionRuns)
+    .where(inArray(collectionRuns.status, ["PLANNED", "RUNNING"]))
+    .limit(limit);
+}
+
 export async function getProviderUsageSince(
   db: Database,
   since: Date,
