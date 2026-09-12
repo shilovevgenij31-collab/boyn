@@ -8,12 +8,13 @@
  *   GET  /v2/actor-runs/{runId}         -> { data: { status, ... } }
  *   GET  /v2/datasets/{datasetId}/items -> array of items
  *
- * Actor input field names below (hashtags/resultsPerPage/sorting for
- * clockworks/tiktok-scraper; hashtags/resultsLimit/resultsType for
- * apify/instagram-hashtag-scraper) come from each actor's published input
- * schema as researched in planning, not from a live account — if the
- * configured actor (APIFY_ACTOR_TIKTOK / APIFY_ACTOR_INSTAGRAM) differs,
- * check its actual input schema on Apify Console before trusting results.
+ * Actor input field names below were (re-)verified 2026-09-12 directly
+ * against each actor's current published input schema page
+ * (apify.com/clockworks/tiktok-scraper/api/param and
+ * apify.com/apify/instagram-hashtag-scraper/api/param) — not reused from
+ * planning-time research. If APIFY_ACTOR_TIKTOK / APIFY_ACTOR_INSTAGRAM are
+ * later pointed at a different actor, re-check its schema before trusting
+ * these builders.
  */
 import { fetchJson } from "./http.ts";
 
@@ -138,6 +139,14 @@ export async function pollUntilTerminal(
   };
 }
 
+/**
+ * Verified 2026-09-12 against apify.com/clockworks/tiktok-scraper/api/param
+ * (current published input schema, not a stale example): `hashtags`,
+ * `resultsPerPage`, `profileSorting` ("latest"/"oldest"/"popular") are the
+ * fields the actor's own sample input combines together. Kept deliberately
+ * minimal — no undocumented flags — to avoid a schema-validation failure on
+ * a paid run.
+ */
 export function buildTikTokHashtagInput(
   hashtags: string[],
   resultsPerPage: number,
@@ -145,20 +154,29 @@ export function buildTikTokHashtagInput(
   return {
     hashtags: hashtags.map((h) => h.replace(/^#/, "")),
     resultsPerPage,
-    sorting: "latest",
-    shouldDownloadVideos: false,
-    shouldDownloadCovers: false,
-    shouldDownloadSubtitles: false,
+    profileSorting: "latest",
   };
 }
 
+/** Verified: `postURLs` is a documented direct-video-URL input field on the
+ * same actor — used for the refresh-by-URL experiment. */
+export function buildTikTokPostUrlInput(urls: string[]): Record<string, unknown> {
+  return { postURLs: urls };
+}
+
+/**
+ * Verified 2026-09-12 against apify.com/apify/instagram-hashtag-scraper/api/param:
+ * `hashtags`, `resultsType` ("posts"|"reels"), `resultsLimit`. No date/
+ * recency filter field exists on this actor (confirmed), and no URL-input
+ * field is documented either — see the module-level note on refresh-by-URL.
+ */
 export function buildInstagramHashtagInput(
   hashtags: string[],
   resultsLimit: number,
 ): Record<string, unknown> {
   return {
     hashtags: hashtags.map((h) => h.replace(/^#/, "")),
-    resultsLimit,
     resultsType: "reels",
+    resultsLimit,
   };
 }

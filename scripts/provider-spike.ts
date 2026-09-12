@@ -120,7 +120,13 @@ function assessMultiQueryAttribution(
 ): { verdict: SupportVerdict; note: string } {
   if (records.length === 0) return { verdict: "NOT_TESTED", note: "no records returned" };
 
-  const explicitFieldCandidates = ["input.hashtag", "input.search_keyword", "searchHashtag", "input"];
+  const explicitFieldCandidates = [
+    "input.hashtag",
+    "input.search_keyword",
+    "search_keyword",
+    "searchHashtag",
+    "input",
+  ];
   const withExplicit = records.filter(
     (r) => firstPresent(r, explicitFieldCandidates).field !== null,
   ).length;
@@ -167,13 +173,17 @@ async function saveFixtures(
   platform: PlatformName,
   sanitizedRecords: unknown[],
   max = 5,
+  // Distinct prefixes for discovery vs. refresh fixtures — using the same
+  // "sample-N" numbering for both silently overwrote discovery fixtures
+  // with the refresh record on the first live run of this script.
+  prefix: "sample" | "refresh" = "sample",
 ): Promise<number> {
   if (sanitizedRecords.length === 0) return 0;
   const dir = resolve(REPO_ROOT, "test", "fixtures", provider, platform);
   await mkdir(dir, { recursive: true });
   const toSave = sanitizedRecords.slice(0, max);
   for (let i = 0; i < toSave.length; i++) {
-    const path = resolve(dir, `sample-${i + 1}.json`);
+    const path = resolve(dir, `${prefix}-${i + 1}.json`);
     await writeFile(path, JSON.stringify(toSave[i], null, 2) + "\n", "utf8");
   }
   return toSave.length;
@@ -288,42 +298,50 @@ function buildCombinationResult(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Bright Data
+// Bright Data — TikTok only. Instagram has no verified hashtag-discovery
+// endpoint on this account (see module doc comment in provider-spike/brightdata.ts);
+// it is intentionally not attempted here, not just blocked on a missing env var.
 // ---------------------------------------------------------------------------
 
-async function testBrightDataPlatform(
-  platform: PlatformName,
+/** Submits a Bright Data job and returns its records, transparently
+ * handling both the async (snapshot_id -> poll -> fetch) and the
+ * synchronous (direct array) response shapes /scrape may return. */
+async function submitAndCollect(
   datasetId: string,
   apiToken: string,
-): Promise<CombinationResult> {
-  const rows = HASHTAGS.map((h) => brightdata.buildHashtagDiscoveryInput(h, RESULTS_PER_HASHTAG));
-  log(`Bright Data / ${platform}: triggering discovery for ${HASHTAGS.map((h) => "#" + h).join(", ")}`);
+  body: unknown,
+  extraQuery: Record<string, string> | undefined,
+  label: string,
+): Promise<{ rawRecords: Record<string, unknown>[]; asyncLatency: CombinationResult["asyncLatency"] }> {
+  const submitStartedAt = Date.now();
+  const submitResult = await brightdata.submit({ datasetId, apiToken, body, extraQuery });
 
-  const trigger = await brightdata.triggerJob({
-    datasetId,
-    apiToken,
-    rows,
-    extraQuery: { type: "discover_new", discover_by: "hashtag" },
-  });
-  log(`Bright Data / ${platform}: snapshot ${trigger.snapshotId} submitted, polling...`);
+  if (submitResult.directRecords !== null) {
+    log(`${label}: synchronous response, ${submitResult.directRecords.length} record(s), ${submitResult.latencyMs}ms`);
+    return {
+      rawRecords: submitResult.directRecords as Record<string, unknown>[],
+      asyncLatency: {
+        submittedAt: submitStartedAt,
+        readyAt: Date.now(),
+        totalLatencyMs: submitResult.latencyMs,
+        pollCount: 0,
+        finalStatus: "direct (synchronous /scrape response)",
+      },
+    };
+  }
 
-  const poll = await brightdata.pollUntilReady(trigger.snapshotId, apiToken, {
+  const snapshotId = submitResult.snapshotId!;
+  log(`${label}: snapshot ${snapshotId} submitted (async), polling...`);
+  const poll = await brightdata.pollUntilReady(snapshotId, apiToken, {
     intervalMs: POLL_INTERVAL_MS,
     timeoutMs: POLL_TIMEOUT_MS,
   });
   if (poll.finalStatus !== "ready") {
-    throw new Error(`Bright Data ${platform} job did not become ready (status=${poll.finalStatus}, polls=${poll.pollCount})`);
+    throw new Error(`${label}: job did not become ready (status=${poll.finalStatus}, polls=${poll.pollCount})`);
   }
-
-  const rawRecords = (await brightdata.getSnapshot(trigger.snapshotId, apiToken)) as Record<string, unknown>[];
-  log(`Bright Data / ${platform}: ${rawRecords.length} record(s) delivered in ${poll.totalLatencyMs}ms`);
-
-  const fixturesSaved = await saveFixtures("brightdata", platform, rawRecords.map((r) => sanitize(r, [apiToken])));
-
-  const result = buildCombinationResult({
-    provider: "brightdata",
-    platform,
-    hashtagsQueried: HASHTAGS,
+  const rawRecords = (await brightdata.getSnapshot(snapshotId, apiToken)) as Record<string, unknown>[];
+  log(`${label}: ${rawRecords.length} record(s) delivered in ${poll.totalLatencyMs}ms (${poll.pollCount} poll(s))`);
+  return {
     rawRecords,
     asyncLatency: {
       submittedAt: poll.submittedAt,
@@ -332,6 +350,29 @@ async function testBrightDataPlatform(
       pollCount: poll.pollCount,
       finalStatus: poll.finalStatus,
     },
+  };
+}
+
+async function testBrightDataTikTok(datasetId: string, apiToken: string): Promise<CombinationResult> {
+  const body = brightdata.buildTikTokKeywordDiscoveryBody(HASHTAGS, RESULTS_PER_HASHTAG);
+  log(`Bright Data / tiktok: discover-by-keyword for ${HASHTAGS.map((h) => "#" + h).join(", ")}`);
+
+  const { rawRecords, asyncLatency } = await submitAndCollect(
+    datasetId,
+    apiToken,
+    body,
+    { notify: "false", type: "discover_new", discover_by: "keyword" },
+    "Bright Data / tiktok discovery",
+  );
+
+  const fixturesSaved = await saveFixtures("brightdata", "tiktok", rawRecords.map((r) => sanitize(r, [apiToken])));
+
+  const result = buildCombinationResult({
+    provider: "brightdata",
+    platform: "tiktok",
+    hashtagsQueried: HASHTAGS,
+    rawRecords,
+    asyncLatency,
     cost: {
       recordsRequested: HASHTAGS.length * RESULTS_PER_HASHTAG,
       recordsDelivered: rawRecords.length,
@@ -342,18 +383,17 @@ async function testBrightDataPlatform(
     fixturesSaved,
   });
 
-  result.refreshByUrl = await tryBrightDataRefresh(platform, datasetId, apiToken, rawRecords, result);
+  result.refreshByUrl = await tryBrightDataTikTokRefresh(datasetId, apiToken, rawRecords, result);
   return result;
 }
 
-async function tryBrightDataRefresh(
-  platform: PlatformName,
+async function tryBrightDataTikTokRefresh(
   datasetId: string,
   apiToken: string,
   rawRecords: Record<string, unknown>[],
   discoveryResult: CombinationResult,
 ): Promise<RefreshByUrlFinding> {
-  const candidates = FIELD_CANDIDATES[`brightdata_${platform}` as CombinationKey];
+  const candidates = FIELD_CANDIDATES.brightdata_tiktok;
   const first = rawRecords[0];
   const url = first ? firstPresent(first, candidates.url).value : undefined;
   const originalId = first ? firstPresent(first, candidates.id).value : undefined;
@@ -374,36 +414,21 @@ async function tryBrightDataRefresh(
   }
 
   try {
-    log(`Bright Data / ${platform}: attempting collect-by-URL refresh for one discovered post`);
+    log(`Bright Data / tiktok: attempting collect-by-URL refresh for one discovered post`);
     const startedAt = Date.now();
-    const trigger = await brightdata.triggerJob({
+    const { rawRecords: refreshedRecords } = await submitAndCollect(
       datasetId,
       apiToken,
-      rows: [brightdata.buildCollectByUrlInput(url)],
-    });
-    const poll = await brightdata.pollUntilReady(trigger.snapshotId, apiToken, {
-      intervalMs: POLL_INTERVAL_MS,
-      timeoutMs: POLL_TIMEOUT_MS,
-    });
-    if (poll.finalStatus !== "ready") {
-      return {
-        verdict: "NOT_SUPPORTED",
-        originalExternalId: originalId !== undefined ? String(originalId) : null,
-        refreshedExternalId: null,
-        sameExternalId: null,
-        originalViews,
-        refreshedViews: null,
-        latencyMs: Date.now() - startedAt,
-        note: `collect-by-URL job did not become ready (status=${poll.finalStatus})`,
-      };
-    }
-    const refreshedRecords = (await brightdata.getSnapshot(trigger.snapshotId, apiToken)) as Record<string, unknown>[];
+      brightdata.buildCollectByUrlBody([url]),
+      undefined,
+      "Bright Data / tiktok refresh",
+    );
     const refreshed = refreshedRecords[0];
     const refreshedId = refreshed ? firstPresent(refreshed, candidates.id).value : undefined;
     const refreshedViewsRaw = refreshed ? firstPresent(refreshed, candidates.views).value : undefined;
     const refreshedViews = typeof refreshedViewsRaw === "number" ? refreshedViewsRaw : null;
 
-    await saveFixtures("brightdata", platform, refreshedRecords.map((r) => sanitize(r, [apiToken])), 1);
+    await saveFixtures("brightdata", "tiktok", refreshedRecords.map((r) => sanitize(r, [apiToken])), 1, "refresh");
     discoveryResult.fixturesSaved += refreshedRecords.length > 0 ? 1 : 0;
 
     return {
@@ -446,6 +471,10 @@ async function testApifyPlatform(
     platform === "tiktok"
       ? apify.buildTikTokHashtagInput(HASHTAGS, RESULTS_PER_HASHTAG)
       : apify.buildInstagramHashtagInput(HASHTAGS, RESULTS_PER_HASHTAG);
+  // Verified 2026-09-12 (see apify.ts module doc comment): clockworks/tiktok-scraper
+  // documents `postURLs`; apify/instagram-hashtag-scraper documents NO url-input
+  // field at all. TikTok refresh is attempted for real below; Instagram refresh
+  // is reported NOT_SUPPORTED from the confirmed schema without spending a run.
 
   log(`Apify / ${platform}: running actor ${actorId} for ${HASHTAGS.map((h) => "#" + h).join(", ")}`);
   const run = await apify.runActor(actorId, apiToken, input);
@@ -487,18 +516,22 @@ async function testApifyPlatform(
     fixturesSaved,
   });
 
-  result.refreshByUrl = await tryApifyRefresh(platform, actorId, apiToken, rawRecords, result);
+  result.refreshByUrl =
+    platform === "tiktok"
+      ? await tryApifyTikTokRefresh(actorId, apiToken, rawRecords, result)
+      : apifyInstagramRefreshNotSupported(rawRecords);
   return result;
 }
 
-async function tryApifyRefresh(
-  platform: PlatformName,
+/** Real attempt: clockworks/tiktok-scraper documents `postURLs` as a direct-
+ * video-URL input field (verified 2026-09-12). */
+async function tryApifyTikTokRefresh(
   actorId: string,
   apiToken: string,
   rawRecords: Record<string, unknown>[],
   discoveryResult: CombinationResult,
 ): Promise<RefreshByUrlFinding> {
-  const candidates = FIELD_CANDIDATES[`apify_${platform}` as CombinationKey];
+  const candidates = FIELD_CANDIDATES.apify_tiktok;
   const first = rawRecords[0];
   const url = first ? firstPresent(first, candidates.url).value : undefined;
   const originalId = first ? firstPresent(first, candidates.id).value : undefined;
@@ -518,17 +551,10 @@ async function tryApifyRefresh(
     };
   }
 
-  // Best-effort: the same actor may or may not accept direct-URL input —
-  // hashtag-discovery actors often don't. We try the commonly-documented
-  // field names and honestly report NOT_SUPPORTED if the actor rejects it
-  // or returns nothing usable, rather than assuming.
-  const urlInput: Record<string, unknown> =
-    platform === "tiktok" ? { postURLs: [url] } : { directUrls: [url] };
-
   try {
-    log(`Apify / ${platform}: attempting direct-URL refresh for one discovered post`);
+    log(`Apify / tiktok: attempting postURLs refresh for one discovered post`);
     const startedAt = Date.now();
-    const run = await apify.runActor(actorId, apiToken, urlInput);
+    const run = await apify.runActor(actorId, apiToken, apify.buildTikTokPostUrlInput([url]));
     const poll = await apify.pollUntilTerminal(run.runId, apiToken, {
       intervalMs: POLL_INTERVAL_MS,
       timeoutMs: POLL_TIMEOUT_MS,
@@ -542,7 +568,7 @@ async function tryApifyRefresh(
         originalViews,
         refreshedViews: null,
         latencyMs: Date.now() - startedAt,
-        note: `direct-URL run did not succeed (status=${poll.finalStatus}) — actor "${actorId}" likely doesn't support this input shape for URL refresh`,
+        note: `postURLs run did not succeed (status=${poll.finalStatus})`,
       };
     }
     const refreshedRecords = (await apify.getDatasetItems(run.defaultDatasetId, apiToken)) as Record<string, unknown>[];
@@ -551,7 +577,7 @@ async function tryApifyRefresh(
     const refreshedViewsRaw = refreshed ? firstPresent(refreshed, candidates.views).value : undefined;
     const refreshedViews = typeof refreshedViewsRaw === "number" ? refreshedViewsRaw : null;
 
-    await saveFixtures("apify", platform, refreshedRecords.map((r) => sanitize(r, [apiToken])), 1);
+    await saveFixtures("apify", "tiktok", refreshedRecords.map((r) => sanitize(r, [apiToken])), 1, "refresh");
     discoveryResult.fixturesSaved += refreshedRecords.length > 0 ? 1 : 0;
 
     return {
@@ -564,8 +590,8 @@ async function tryApifyRefresh(
       latencyMs: Date.now() - startedAt,
       note:
         refreshedRecords.length === 1
-          ? `direct-URL input (${Object.keys(urlInput)[0]}) returned exactly one record`
-          : `direct-URL input returned ${refreshedRecords.length} record(s) for one URL (expected 1)`,
+          ? "postURLs returned exactly one record for the given URL"
+          : `postURLs returned ${refreshedRecords.length} record(s) for one URL (expected 1)`,
     };
   } catch (error) {
     return {
@@ -576,9 +602,33 @@ async function tryApifyRefresh(
       originalViews,
       refreshedViews: null,
       latencyMs: null,
-      note: `direct-URL attempt errored: ${error instanceof Error ? error.message : String(error)}`,
+      note: `postURLs attempt errored: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+/** No network call: apify/instagram-hashtag-scraper's current input schema
+ * (verified 2026-09-12 against apify.com/apify/instagram-hashtag-scraper/api/param)
+ * has no URL-input field at all — spending a paid run to confirm the
+ * already-documented absence would be wasteful, per Phase 1 cost discipline. */
+function apifyInstagramRefreshNotSupported(rawRecords: Record<string, unknown>[]): RefreshByUrlFinding {
+  const candidates = FIELD_CANDIDATES.apify_instagram;
+  const first = rawRecords[0];
+  const originalId = first ? firstPresent(first, candidates.id).value : undefined;
+  const originalViewsRaw = first ? firstPresent(first, candidates.views).value : undefined;
+  return {
+    verdict: "NOT_SUPPORTED",
+    originalExternalId: originalId !== undefined ? String(originalId) : null,
+    refreshedExternalId: null,
+    sameExternalId: null,
+    originalViews: typeof originalViewsRaw === "number" ? originalViewsRaw : null,
+    refreshedViews: null,
+    latencyMs: null,
+    note:
+      "not attempted (no paid call made): the actor's current published input schema has no " +
+      "URL-input field, so a direct-URL refresh isn't supported by this actor — a different " +
+      "Instagram actor would be needed for refresh-by-URL.",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -607,7 +657,7 @@ async function main(): Promise<void> {
   if (availability.brightdataTiktok.available) {
     try {
       combinations.push(
-        await testBrightDataPlatform("tiktok", creds.brightData!.datasetTikTokPosts!, creds.brightData!.apiToken),
+        await testBrightDataTikTok(creds.brightData!.datasetTikTokPosts!, creds.brightData!.apiToken),
       );
     } catch (error) {
       log(`Bright Data / tiktok ERROR: ${error instanceof Error ? error.message : String(error)}`);
@@ -617,19 +667,19 @@ async function main(): Promise<void> {
     combinations.push(blockedResult("brightdata", "tiktok", availability.brightdataTiktok.detail));
   }
 
-  // Bright Data / Instagram
-  if (availability.brightdataInstagram.available) {
-    try {
-      combinations.push(
-        await testBrightDataPlatform("instagram", creds.brightData!.datasetInstagramPosts!, creds.brightData!.apiToken),
-      );
-    } catch (error) {
-      log(`Bright Data / instagram ERROR: ${error instanceof Error ? error.message : String(error)}`);
-      combinations.push(errorResult("brightdata", "instagram", HASHTAGS, error));
-    }
-  } else {
-    combinations.push(blockedResult("brightdata", "instagram", availability.brightdataInstagram.detail));
-  }
+  // Bright Data / Instagram — intentionally never attempted in Phase 1: no
+  // verified hashtag-discovery endpoint exists on this account (manually
+  // inspected; see docs/PROVIDER_SPIKE.md and BRIGHTDATA_DATASET_INSTAGRAM_POSTS
+  // is deliberately left unset). Always BLOCKED, by design, not by omission.
+  combinations.push(
+    blockedResult(
+      "brightdata",
+      "instagram",
+      availability.brightdataInstagram.available
+        ? "deliberately not attempted — no verified Instagram hashtag-discovery endpoint on this account"
+        : availability.brightdataInstagram.detail,
+    ),
+  );
 
   // Apify / TikTok
   if (availability.apifyTiktok.available) {
@@ -680,7 +730,7 @@ async function main(): Promise<void> {
     log("=".repeat(72));
     log("ALL provider credentials are missing. No network calls were made.");
     log("To run the spike for real, set in .env.local (repo root):");
-    log("  BRIGHTDATA_API_TOKEN, BRIGHTDATA_DATASET_TIKTOK_POSTS, BRIGHTDATA_DATASET_INSTAGRAM_POSTS");
+    log("  BRIGHTDATA_API_TOKEN, BRIGHTDATA_DATASET_TIKTOK_POSTS (Instagram: no verified endpoint, see report)");
     log("  APIFY_API_TOKEN, APIFY_ACTOR_TIKTOK, APIFY_ACTOR_INSTAGRAM");
     log("Then re-run: node scripts/provider-spike.ts");
     log("=".repeat(72));

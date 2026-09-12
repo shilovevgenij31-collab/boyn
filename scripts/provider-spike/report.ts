@@ -1,4 +1,5 @@
 import type { CombinationResult, SpikeResults } from "./types.ts";
+import { buildAllRecommendations, type PlatformRecommendation } from "./recommendation.ts";
 
 function fmtPct(n: number | null): string {
   return n === null ? "—" : `${n}%`;
@@ -123,6 +124,66 @@ function combinationSection(c: CombinationResult): string {
   return parts.join("\n");
 }
 
+const GATE_BADGE: Record<PlatformRecommendation["gate"], string> = {
+  PASSED: "✅ PASSED",
+  FAILED: "❌ FAILED",
+  BLOCKED: "⛔ BLOCKED",
+};
+
+function decisionMatrixRow(c: CombinationResult): string {
+  const f = c.freshness;
+  const cell = (v: unknown) => (v === null || v === undefined ? "—" : String(v));
+  return (
+    `| ${c.provider} / ${c.platform} | ${c.outcome} | ${cell(f?.pctLt24h)}% | ` +
+    `${c.urlFinding ? fmtBool(c.urlFinding.looksCanonical) : "—"} | ` +
+    `${c.idFinding ? cell(c.idFinding.candidateField) : "—"} | ` +
+    `${c.viewsMetricNote ? "yes" : "—"} | ${c.refreshByUrl?.verdict ?? "—"} | ` +
+    `${c.asyncLatency?.totalLatencyMs ?? "—"}ms | ` +
+    `${c.cost?.estimatedUsd !== null && c.cost?.estimatedUsd !== undefined ? `$${c.cost.estimatedUsd.toFixed(2)}` : "—"} |`
+  );
+}
+
+function recommendationSection(rec: PlatformRecommendation): string {
+  const lines: string[] = [];
+  lines.push(`### ${rec.platform.toUpperCase()}`);
+  lines.push("");
+  lines.push(`**Decision gate:** ${GATE_BADGE[rec.gate]} — ${rec.gateReason}`);
+  lines.push("");
+  lines.push(`**Can we detect content "taking off today"?** ${rec.productFit} — ${rec.productFitReason}`);
+  lines.push("");
+  lines.push(`- **Primary discovery:** ${rec.primaryDiscovery} — ${rec.primaryDiscoveryReason}`);
+  lines.push(`- **Fallback:** ${rec.fallback} — ${rec.fallbackReason}`);
+  lines.push(`- **Refresh:** ${rec.refresh} — ${rec.refreshReason}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+function buildDecisionSection(results: SpikeResults): string {
+  const lines: string[] = [];
+  lines.push("## Decision matrix");
+  lines.push("");
+  lines.push(
+    "| Combination | Outcome | %<24h | Canonical URL | Stable-ID field | Views metric found | Refresh-by-URL | Latency | Est. cost |",
+  );
+  lines.push("|---|---|---|---|---|---|---|---|---|");
+  for (const c of results.combinations) lines.push(decisionMatrixRow(c));
+  lines.push("");
+
+  lines.push("## Routing recommendation & decision gate");
+  lines.push("");
+  lines.push(
+    "Computed from the measurements above (see `scripts/provider-spike/recommendation.ts`): " +
+      `GOOD freshness requires %<24h ≥ 40, PARTIAL requires ≥ 15, below that is POOR. ` +
+      "A platform's gate PASSES only if at least one tested path is GOOD or PARTIAL.",
+  );
+  lines.push("");
+  for (const rec of buildAllRecommendations(results.combinations)) {
+    lines.push(recommendationSection(rec));
+  }
+
+  return lines.join("\n");
+}
+
 export function buildReportMarkdown(results: SpikeResults): string {
   const lines: string[] = [];
   lines.push("# Provider Spike — Phase 1 Results");
@@ -158,6 +219,11 @@ export function buildReportMarkdown(results: SpikeResults): string {
     lines.push(combinationSection(c));
     lines.push("");
   }
+  lines.push("---");
+  lines.push("");
+
+  lines.push(buildDecisionSection(results));
+  lines.push("");
   lines.push("---");
   lines.push("");
 
