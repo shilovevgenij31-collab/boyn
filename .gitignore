@@ -16,6 +16,11 @@
 # testing / coverage
 /coverage
 
+# Phase 1 provider spike: local raw output (may contain sanitized-but-still
+# operational detail beyond what belongs in git). Committed outputs are
+# docs/PROVIDER_SPIKE.md and test/fixtures/** only.
+/.spike
+
 # misc
 .DS_Store
 *.pem

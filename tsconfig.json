@@ -13,6 +13,11 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Needed for scripts/provider-spike/*: those files are run directly by
+    // `node` (native TS type-stripping, no bundler), which requires explicit
+    // ".ts" extensions on relative specifiers. Harmless for the Next.js app
+    // tree, which never writes explicit extensions.
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],

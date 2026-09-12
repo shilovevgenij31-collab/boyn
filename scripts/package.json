@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Scopes ESM module resolution to scripts/** only, so these files can be run directly with `node` (native TypeScript type-stripping) without changing the root app package.json's module system."
+}
