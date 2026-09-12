@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import { collectionRuns, providerJobs } from "@/db/schema.ts";
+import type { ProviderId } from "@/core/domain/provider.ts";
 
 export interface CreateCollectionRunParams {
   kind: "DISCOVERY" | "REFRESH" | "MANUAL";
@@ -77,4 +78,38 @@ export async function createProviderJob(db: Database, params: CreateProviderJobP
   const row = rows[0];
   if (!row) throw new Error("createProviderJob: insert returned no row");
   return row.id;
+}
+
+export interface UsageTotals {
+  recordsUsed: number;
+  /** Exact decimal string (Postgres NUMERIC sum) — see src/db/schema.ts's
+   * module comment on money types; never parsed to a JS number until a
+   * single final comparison at the call site (src/providers/budget.ts). */
+  costUsd: string;
+}
+
+/**
+ * Sums directly from persisted `provider_jobs` rows — this is the ONLY
+ * source of truth for usage (Phase 4 brief §19: "do NOT maintain a second
+ * mutable counter that can drift"). A job with a null `submitted_at`
+ * (never actually submitted) is naturally excluded by the `>=` filter,
+ * which is correct: nothing was sent, nothing should count.
+ */
+export async function getProviderUsageSince(
+  db: Database,
+  since: Date,
+  provider?: ProviderId,
+): Promise<UsageTotals> {
+  const conditions = [gte(providerJobs.submittedAt, since)];
+  if (provider) conditions.push(eq(providerJobs.provider, provider));
+
+  const rows = await db
+    .select({
+      records: sql<string>`coalesce(sum(${providerJobs.recordsReturned}), 0)`,
+      cost: sql<string>`coalesce(sum(${providerJobs.costEstUsd}), 0)`,
+    })
+    .from(providerJobs)
+    .where(and(...conditions));
+
+  return { recordsUsed: Number(rows[0]?.records ?? "0"), costUsd: rows[0]?.cost ?? "0" };
 }

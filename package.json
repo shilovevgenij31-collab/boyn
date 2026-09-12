@@ -21,7 +21,8 @@
     "spike": "node scripts/provider-spike.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:seed": "tsx scripts/db-seed.ts"
+    "db:seed": "tsx scripts/db-seed.ts",
+    "provider:smoke": "tsx scripts/provider-smoke.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
