@@ -31,19 +31,22 @@ export interface FieldCandidates {
 
 export const FIELD_CANDIDATES: Record<CombinationKey, FieldCandidates> = {
   brightdata_tiktok: {
+    // Verified 2026-09-12 against a real record from dataset
+    // gd_lu702nij2f790tmv9h (Phase 1B smoke test) — real field names come
+    // first; earlier unverified guesses kept as fallback candidates.
     id: ["post_id", "id", "aweme_id"],
     url: ["url", "web_url", "video_url"],
-    username: ["user_posted", "username", "author"],
-    publishedAt: ["date_posted", "create_time", "createTime"],
-    views: ["views", "play_count", "video_play_count"],
-    likes: ["likes", "digg_count"],
-    comments: ["num_comments", "comment_count", "comments"],
-    shares: ["shares", "share_count"],
+    username: ["profile_username", "user_posted", "username", "author"],
+    publishedAt: ["create_time", "date_posted", "createTime"],
+    views: ["play_count", "views", "video_play_count"],
+    likes: ["digg_count", "likes"],
+    comments: ["comment_count", "num_comments", "comments"],
+    shares: ["share_count", "shares"],
     caption: ["description", "caption", "title"],
     hashtags: ["hashtags"],
-    musicTitle: ["music_title", "song"],
+    musicTitle: ["music.title", "music_title", "song"],
     duration: ["video_duration", "duration"],
-    followerCount: ["followers", "author_followers"],
+    followerCount: ["profile_followers", "followers", "author_followers"],
     verified: ["is_verified", "verified"],
   },
   brightdata_instagram: {

@@ -165,6 +165,34 @@ export function buildTikTokPostUrlInput(urls: string[]): Record<string, unknown>
 }
 
 /**
+ * Phase 1B Candidate B — TikTok SEARCH mode (not hashtag mode, which was
+ * rejected in Phase 1 for staleness). Verified 2026-09-12 directly from the
+ * actor's live build input schema (GET
+ * /v2/acts/clockworks~tiktok-scraper/builds/default -> data.inputSchema),
+ * not a doc page paraphrase:
+ *   - `searchQueries`: array of free-text query strings.
+ *   - `searchSection`: enum ["", "/video", "/user"] — must be "/video" for
+ *     `videoSearchSorting`/`videoSearchDateFilter` to take effect at all
+ *     (both are documented "Only valid with `/video` search section").
+ *   - `videoSearchSorting`: enum ["MOST_RELEVANT","MOST_LIKED","LATEST"].
+ *   - `videoSearchDateFilter`: enum ["ALL_TIME","PAST_24_HOURS","PAST_WEEK",
+ *     "PAST_MONTH","LAST_3_MONTHS","LAST_6_MONTHS"].
+ * Both sorting and date-filter are documented "$" (charged) filters.
+ */
+export function buildTikTokSearchInput(
+  queries: string[],
+  resultsPerPage: number,
+): Record<string, unknown> {
+  return {
+    searchQueries: queries,
+    searchSection: "/video",
+    videoSearchSorting: "LATEST",
+    videoSearchDateFilter: "PAST_24_HOURS",
+    resultsPerPage,
+  };
+}
+
+/**
  * Verified 2026-09-12 against apify.com/apify/instagram-hashtag-scraper/api/param:
  * `hashtags`, `resultsType` ("posts"|"reels"), `resultsLimit`. No date/
  * recency filter field exists on this actor (confirmed), and no URL-input

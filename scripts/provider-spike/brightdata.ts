@@ -31,6 +31,7 @@
  * client code here; Instagram discovery for Phase 1 goes through Apify.
  */
 import { fetchJson } from "./http.ts";
+import type { AsyncLatencyFinding } from "./types.ts";
 
 const BASE_URL = "https://api.brightdata.com/datasets/v3";
 
@@ -73,7 +74,14 @@ export async function submit(params: SubmitParams): Promise<SubmitResult> {
     method: "POST",
     headers: authHeaders(params.apiToken),
     body: params.body,
-    timeoutMs: 30_000,
+    // Empirically (Phase 1B smoke test) /scrape can take ~60s+ before
+    // responding with 202 + snapshot_id — it appears to attempt a
+    // synchronous wait before falling back to async. maxRetries: 0 is
+    // deliberate: a client-side abort here most likely means the job is
+    // still running server-side, not that the request was dropped —
+    // retrying would risk submitting (and billing) a duplicate job.
+    timeoutMs: 120_000,
+    maxRetries: 0,
   });
 
   if (!result.ok) {
@@ -208,4 +216,62 @@ export function buildTikTokKeywordDiscoveryBody(
 /** Verified body shape for "Collect by URL". */
 export function buildCollectByUrlBody(urls: string[]): { input: { url: string }[] } {
   return { input: urls.map((url) => ({ url })) };
+}
+
+export interface SubmitAndCollectResult {
+  rawRecords: Record<string, unknown>[];
+  asyncLatency: AsyncLatencyFinding;
+}
+
+/** Submits a job and returns its records, transparently handling both the
+ * async (snapshot_id -> poll -> fetch) and the synchronous (direct array)
+ * response shapes /scrape may return. Shared by both the Phase 1 and Phase
+ * 1B spike orchestrators. `onLog` is optional so callers can wire up their
+ * own console prefix without this module taking a hard logging dependency. */
+export async function submitAndCollect(
+  params: SubmitParams,
+  label: string,
+  options: { pollIntervalMs?: number; pollTimeoutMs?: number; onLog?: (msg: string) => void } = {},
+): Promise<SubmitAndCollectResult> {
+  const { pollIntervalMs = 10_000, pollTimeoutMs = 5 * 60_000, onLog } = options;
+  const log = onLog ?? (() => {});
+
+  const submitStartedAt = Date.now();
+  const submitResult = await submit(params);
+
+  if (submitResult.directRecords !== null) {
+    log(`${label}: synchronous response, ${submitResult.directRecords.length} record(s), ${submitResult.latencyMs}ms`);
+    return {
+      rawRecords: submitResult.directRecords as Record<string, unknown>[],
+      asyncLatency: {
+        submittedAt: submitStartedAt,
+        readyAt: Date.now(),
+        totalLatencyMs: submitResult.latencyMs,
+        pollCount: 0,
+        finalStatus: "direct (synchronous /scrape response)",
+      },
+    };
+  }
+
+  const snapshotId = submitResult.snapshotId!;
+  log(`${label}: snapshot ${snapshotId} submitted (async), polling...`);
+  const poll = await pollUntilReady(snapshotId, params.apiToken, {
+    intervalMs: pollIntervalMs,
+    timeoutMs: pollTimeoutMs,
+  });
+  if (poll.finalStatus !== "ready") {
+    throw new Error(`${label}: job did not become ready (status=${poll.finalStatus}, polls=${poll.pollCount})`);
+  }
+  const rawRecords = (await getSnapshot(snapshotId, params.apiToken)) as Record<string, unknown>[];
+  log(`${label}: ${rawRecords.length} record(s) delivered in ${poll.totalLatencyMs}ms (${poll.pollCount} poll(s))`);
+  return {
+    rawRecords,
+    asyncLatency: {
+      submittedAt: poll.submittedAt,
+      readyAt: poll.readyAt,
+      totalLatencyMs: poll.totalLatencyMs,
+      pollCount: poll.pollCount,
+      finalStatus: poll.finalStatus,
+    },
+  };
 }

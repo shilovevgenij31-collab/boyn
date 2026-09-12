@@ -23,6 +23,7 @@ import { computeFreshnessStats } from "./provider-spike/freshness.ts";
 import { computeFieldCoverage } from "./provider-spike/coverage.ts";
 import { allCandidateFieldPaths, FIELD_CANDIDATES, firstPresent, getPath, parseTimestamp } from "./provider-spike/extract.ts";
 import { buildReportMarkdown } from "./provider-spike/report.ts";
+import { saveFixtures as sharedSaveFixtures } from "./provider-spike/fixtures.ts";
 import * as brightdata from "./provider-spike/brightdata.ts";
 import * as apify from "./provider-spike/apify.ts";
 import type {
@@ -121,6 +122,10 @@ function assessMultiQueryAttribution(
   if (records.length === 0) return { verdict: "NOT_TESTED", note: "no records returned" };
 
   const explicitFieldCandidates = [
+    // "input.discovery_input.search_keyword" verified 2026-09-12 against a
+    // real Bright Data record (Phase 1B smoke test).
+    "input.discovery_input.search_keyword",
+    "discovery_input.search_keyword",
     "input.hashtag",
     "input.search_keyword",
     "search_keyword",
@@ -168,25 +173,14 @@ function assessMultiQueryAttribution(
   };
 }
 
-async function saveFixtures(
+function saveFixtures(
   provider: ProviderName,
   platform: PlatformName,
   sanitizedRecords: unknown[],
   max = 5,
-  // Distinct prefixes for discovery vs. refresh fixtures — using the same
-  // "sample-N" numbering for both silently overwrote discovery fixtures
-  // with the refresh record on the first live run of this script.
   prefix: "sample" | "refresh" = "sample",
 ): Promise<number> {
-  if (sanitizedRecords.length === 0) return 0;
-  const dir = resolve(REPO_ROOT, "test", "fixtures", provider, platform);
-  await mkdir(dir, { recursive: true });
-  const toSave = sanitizedRecords.slice(0, max);
-  for (let i = 0; i < toSave.length; i++) {
-    const path = resolve(dir, `${prefix}-${i + 1}.json`);
-    await writeFile(path, JSON.stringify(toSave[i], null, 2) + "\n", "utf8");
-  }
-  return toSave.length;
+  return sharedSaveFixtures(REPO_ROOT, provider, platform, sanitizedRecords, max, prefix);
 }
 
 function buildCombinationResult(params: {
@@ -303,66 +297,19 @@ function buildCombinationResult(params: {
 // it is intentionally not attempted here, not just blocked on a missing env var.
 // ---------------------------------------------------------------------------
 
-/** Submits a Bright Data job and returns its records, transparently
- * handling both the async (snapshot_id -> poll -> fetch) and the
- * synchronous (direct array) response shapes /scrape may return. */
-async function submitAndCollect(
-  datasetId: string,
-  apiToken: string,
-  body: unknown,
-  extraQuery: Record<string, string> | undefined,
-  label: string,
-): Promise<{ rawRecords: Record<string, unknown>[]; asyncLatency: CombinationResult["asyncLatency"] }> {
-  const submitStartedAt = Date.now();
-  const submitResult = await brightdata.submit({ datasetId, apiToken, body, extraQuery });
-
-  if (submitResult.directRecords !== null) {
-    log(`${label}: synchronous response, ${submitResult.directRecords.length} record(s), ${submitResult.latencyMs}ms`);
-    return {
-      rawRecords: submitResult.directRecords as Record<string, unknown>[],
-      asyncLatency: {
-        submittedAt: submitStartedAt,
-        readyAt: Date.now(),
-        totalLatencyMs: submitResult.latencyMs,
-        pollCount: 0,
-        finalStatus: "direct (synchronous /scrape response)",
-      },
-    };
-  }
-
-  const snapshotId = submitResult.snapshotId!;
-  log(`${label}: snapshot ${snapshotId} submitted (async), polling...`);
-  const poll = await brightdata.pollUntilReady(snapshotId, apiToken, {
-    intervalMs: POLL_INTERVAL_MS,
-    timeoutMs: POLL_TIMEOUT_MS,
-  });
-  if (poll.finalStatus !== "ready") {
-    throw new Error(`${label}: job did not become ready (status=${poll.finalStatus}, polls=${poll.pollCount})`);
-  }
-  const rawRecords = (await brightdata.getSnapshot(snapshotId, apiToken)) as Record<string, unknown>[];
-  log(`${label}: ${rawRecords.length} record(s) delivered in ${poll.totalLatencyMs}ms (${poll.pollCount} poll(s))`);
-  return {
-    rawRecords,
-    asyncLatency: {
-      submittedAt: poll.submittedAt,
-      readyAt: poll.readyAt,
-      totalLatencyMs: poll.totalLatencyMs,
-      pollCount: poll.pollCount,
-      finalStatus: poll.finalStatus,
-    },
-  };
-}
-
 async function testBrightDataTikTok(datasetId: string, apiToken: string): Promise<CombinationResult> {
   const body = brightdata.buildTikTokKeywordDiscoveryBody(HASHTAGS, RESULTS_PER_HASHTAG);
   log(`Bright Data / tiktok: discover-by-keyword for ${HASHTAGS.map((h) => "#" + h).join(", ")}`);
 
-  const { rawRecords, asyncLatency } = await submitAndCollect(
-    datasetId,
-    apiToken,
-    body,
-    { notify: "false", type: "discover_new", discover_by: "keyword" },
+  const { rawRecords, asyncLatency } = await brightdata.submitAndCollect(
+    {
+      datasetId,
+      apiToken,
+      body,
+      extraQuery: { notify: "false", type: "discover_new", discover_by: "keyword" },
+    },
     "Bright Data / tiktok discovery",
+    { pollIntervalMs: POLL_INTERVAL_MS, pollTimeoutMs: POLL_TIMEOUT_MS, onLog: log },
   );
 
   const fixturesSaved = await saveFixtures("brightdata", "tiktok", rawRecords.map((r) => sanitize(r, [apiToken])));
@@ -416,12 +363,10 @@ async function tryBrightDataTikTokRefresh(
   try {
     log(`Bright Data / tiktok: attempting collect-by-URL refresh for one discovered post`);
     const startedAt = Date.now();
-    const { rawRecords: refreshedRecords } = await submitAndCollect(
-      datasetId,
-      apiToken,
-      brightdata.buildCollectByUrlBody([url]),
-      undefined,
+    const { rawRecords: refreshedRecords } = await brightdata.submitAndCollect(
+      { datasetId, apiToken, body: brightdata.buildCollectByUrlBody([url]) },
       "Bright Data / tiktok refresh",
+      { pollIntervalMs: POLL_INTERVAL_MS, pollTimeoutMs: POLL_TIMEOUT_MS, onLog: log },
     );
     const refreshed = refreshedRecords[0];
     const refreshedId = refreshed ? firstPresent(refreshed, candidates.id).value : undefined;
