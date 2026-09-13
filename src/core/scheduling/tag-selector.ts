@@ -9,10 +9,9 @@
  */
 import { assertNever } from "@/lib/exhaustive.ts";
 import { TIER_DISCOVERY_INTERVAL_HOURS } from "@/config/schedule.ts";
+import type { HashtagSource, TrackingTier, TrendState } from "@/core/domain/tracking.ts";
 
-export type TrackingTier = "CORE" | "ACTIVE" | "EXPLORATION" | "DORMANT";
-export type HashtagSource = "SEED" | "DISCOVERED" | "MANUAL";
-export type TrendState = "BREAKOUT" | "RISING" | "ACTIVE" | "STABLE" | "FALLING" | "DEAD" | "NEW";
+export type { HashtagSource, TrackingTier, TrendState } from "@/core/domain/tracking.ts";
 
 export interface DueHashtagCandidate {
   trackedHashtagId: number;

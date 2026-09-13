@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import { hashtagCategories, hashtags } from "@/db/schema.ts";
 import type { Category } from "@/core/domain/category.ts";
@@ -89,4 +89,17 @@ export async function getHashtagCategories(
     })
     .from(hashtagCategories)
     .where(and(eq(hashtagCategories.hashtagId, hashtagId)));
+}
+
+/** Batched version for analytics (Phase 6 brief §50: avoid N+1) — one
+ * query for every hashtag id referenced across a whole analytics run. */
+export async function getHashtagCategoriesBulk(
+  db: Database,
+  hashtagIds: number[],
+): Promise<{ hashtagId: number; category: Category; confidence: string }[]> {
+  if (hashtagIds.length === 0) return [];
+  return db
+    .select({ hashtagId: hashtagCategories.hashtagId, category: hashtagCategories.category, confidence: hashtagCategories.confidence })
+    .from(hashtagCategories)
+    .where(inArray(hashtagCategories.hashtagId, hashtagIds));
 }

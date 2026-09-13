@@ -25,7 +25,7 @@ import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@/db/schema.ts";
-import { collectionRuns, hashtags, postSnapshots, posts, providerJobs, quarantinedItems } from "@/db/schema.ts";
+import { collectionRuns, hashtagCooccurrenceDaily, hashtagDailyStats, hashtags, postSnapshots, posts, providerJobs, quarantinedItems } from "@/db/schema.ts";
 import { upsertHashtag } from "@/db/repositories/hashtags.ts";
 import { ensureTrackedHashtag } from "@/db/repositories/tracking.ts";
 import { FixedClock } from "@/lib/clock.ts";
@@ -38,6 +38,7 @@ import { DEFAULT_REGISTRY_CONFIG, ProviderRegistry } from "@/providers/registry.
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
 import { runTick } from "@/jobs/tick.ts";
 import type { TickContext, TickResult } from "@/jobs/types.ts";
+import { runAnalytics, type AnalyticsStats } from "@/jobs/run-analytics.ts";
 
 type TestDatabase = PgliteDatabase<typeof schema>;
 
@@ -79,6 +80,35 @@ export interface SimulationSummary {
   delayedJobCompletedAcrossTicks: boolean;
   replay: { jobsBeforeReplay: number; jobsAfterReplay: number; noDuplicatesCreated: boolean };
   offlineOnly: true;
+  // ---- Phase 6: analytics run periodically through the same simulated
+  // ticks (see runAnalytics calls below) — these totals are summed across
+  // every analytics invocation in the run, not just the last one. ----
+  analyticsRuns: number;
+  postsScored: number;
+  hashtagDailyStatsRows: number;
+  cooccurrenceRows: number;
+  tierPromotions: number;
+  tierDemotions: number;
+  refreshPlansUpdated: number;
+}
+
+/** Clones a real captured TikTok item with a new id/author/view count —
+ * used to deterministically manufacture Phase 6 lifecycle evidence (a
+ * genuinely VIRAL_QUALIFIED post, still shaped exactly like a real Apify
+ * TikTok item so it goes through the real schema/normalizer unmodified)
+ * rather than hand-rolling a synthetic payload from scratch. */
+function boostedClone(base: Record<string, unknown>, params: { id: string; authorId: string; authorName: string; playCount: number; hashtagName: string }): Record<string, unknown> {
+  return {
+    ...base,
+    id: params.id,
+    webVideoUrl: `https://www.tiktok.com/@${params.authorName}/video/${params.id}`,
+    authorMeta: { ...(base.authorMeta as Record<string, unknown>), id: params.authorId, name: params.authorName, uniqueId: params.authorName },
+    playCount: params.playCount,
+    diggCount: Math.round(params.playCount * 0.05),
+    commentCount: Math.round(params.playCount * 0.002),
+    shareCount: Math.round(params.playCount * 0.01),
+    hashtags: [{ id: "9999", name: params.hashtagName }],
+  };
 }
 
 /** A large, deliberately over-provisioned pool so the queue never
@@ -100,9 +130,16 @@ function buildApifyDiscoveryPlans(): FixtureJobPlan[] {
     // eventual success alongside index 0's failure is what makes that
     // run's finalize-runs.ts outcome genuinely PARTIAL, not just FAILED.
     { runningPolls: 1, items: [search[0]!] },
+    // Index 2-3: two genuinely VIRAL_QUALIFIED posts (real schema, boosted
+    // views), tagged #pcgaming, from two distinct authors — the real
+    // evidence Phase 6's lifecycle logic needs to promote the seeded
+    // EXPLORATION "pcgaming" tag to ACTIVE (brief §66: caused by real
+    // evidence, never a hard-coded tier mutation).
+    { runningPolls: 0, items: [boostedClone(search[1]!, { id: "9000000000000000001", authorId: "9000000001", authorName: "pcbuilder1", playCount: 150_000, hashtagName: "pcgaming" })] },
+    { runningPolls: 0, items: [boostedClone(search[2]!, { id: "9000000000000000002", authorId: "9000000002", authorName: "pcbuilder2", playCount: 200_000, hashtagName: "pcgaming" })] },
   ];
 
-  for (let i = 0; i < 250; i++) {
+  for (let i = 0; i < 400; i++) {
     plans.push({ runningPolls: 0, items: [search[i % search.length]!] });
   }
   return plans;
@@ -137,8 +174,17 @@ async function countByStatus(db: TestDatabase, table: typeof providerJobs | type
   return result;
 }
 
+/** How often (in ticks) the simulation runs analytics — every 4h at the
+ * default 30 min tick cadence. Analytics doesn't need to run every tick
+ * (brief §59); a periodic cadence here mirrors a realistic deployment
+ * without needing a real scheduler. */
+const ANALYTICS_EVERY_N_TICKS = 8;
+
 export async function runSimulation(options: SimulationOptions = {}): Promise<SimulationSummary> {
-  const days = options.days ?? 3;
+  // 5 days (not just the minimum 3 — brief §38 says "at least") gives
+  // Phase 6's EXPLORATION_DEMOTION 4-day evidence window (config/
+  // lifecycle.ts) room to genuinely complete within this run.
+  const days = options.days ?? 5;
   const tickIntervalMinutes = options.tickIntervalMinutes ?? 30;
   const totalTicks = Math.round((days * 24 * 60) / tickIntervalMinutes);
 
@@ -176,6 +222,17 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
 
   const tickResults: TickResult[] = [];
   let replaySummary: SimulationSummary["replay"] = { jobsBeforeReplay: 0, jobsAfterReplay: 0, noDuplicatesCreated: true };
+  const analyticsTotals: AnalyticsStats & { runs: number } = {
+    runs: 0,
+    postsAnalyzed: 0,
+    postsScored: 0,
+    baselinesUpdated: 0,
+    hashtagsUpdated: 0,
+    cooccurrencesUpdated: 0,
+    tierPromotions: 0,
+    tierDemotions: 0,
+    refreshPlansUpdated: 0,
+  };
 
   for (let tick = 0; tick < totalTicks; tick++) {
     const result = await runTick(buildTickContext());
@@ -191,6 +248,23 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
       const afterRows = await db.select({ count: sql<string>`count(*)` }).from(providerJobs);
       const after = Number(afterRows[0]?.count ?? "0");
       replaySummary = { jobsBeforeReplay: before, jobsAfterReplay: after, noDuplicatesCreated: before === after };
+    }
+
+    // Phase 6: run analytics periodically on the same simulated clock —
+    // isolated from tick failures/state (run-analytics.ts's own try/catch
+    // around every call means a bug here can never corrupt collection
+    // state, matching brief §60).
+    if (tick % ANALYTICS_EVERY_N_TICKS === 0) {
+      const analyticsResult = await runAnalytics({ db, clock, market: GLOBAL_MARKET });
+      analyticsTotals.runs += 1;
+      analyticsTotals.postsAnalyzed += analyticsResult.postsAnalyzed;
+      analyticsTotals.postsScored += analyticsResult.postsScored;
+      analyticsTotals.baselinesUpdated += analyticsResult.baselinesUpdated;
+      analyticsTotals.hashtagsUpdated += analyticsResult.hashtagsUpdated;
+      analyticsTotals.cooccurrencesUpdated += analyticsResult.cooccurrencesUpdated;
+      analyticsTotals.tierPromotions += analyticsResult.tierPromotions;
+      analyticsTotals.tierDemotions += analyticsResult.tierDemotions;
+      analyticsTotals.refreshPlansUpdated += analyticsResult.refreshPlansUpdated;
     }
 
     clock.advanceMs(tickIntervalMinutes * 60_000);
@@ -210,6 +284,8 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
   const quarantineCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(quarantinedItems));
   const runsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(collectionRuns));
   const jobsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(providerJobs));
+  const hashtagDailyStatsCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(hashtagDailyStats));
+  const cooccurrenceCount = await countAll(db.select({ count: sql<string>`count(*)` }).from(hashtagCooccurrenceDaily));
 
   const runsByStatus = await countByStatus(db, collectionRuns);
   const jobsByStatus = await countByStatus(db, providerJobs);
@@ -245,5 +321,12 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
     delayedJobCompletedAcrossTicks,
     replay: replaySummary,
     offlineOnly: true,
+    analyticsRuns: analyticsTotals.runs,
+    postsScored: analyticsTotals.postsScored,
+    hashtagDailyStatsRows: Number(hashtagDailyStatsCount),
+    cooccurrenceRows: Number(cooccurrenceCount),
+    tierPromotions: analyticsTotals.tierPromotions,
+    tierDemotions: analyticsTotals.tierDemotions,
+    refreshPlansUpdated: analyticsTotals.refreshPlansUpdated,
   };
 }

@@ -169,6 +169,13 @@ export const posts = pgTable(
     velocityConfidence: velocityConfidenceEnum("velocity_confidence"),
     trendScore: smallint("trend_score"),
     risingScore: smallint("rising_score"),
+    // Post-level trend state (Phase 6) — deliberately the SAME enum type
+    // trackedHashtags/hashtagDailyStats use, but a DIFFERENT concept: this
+    // describes what a single post is doing right now (BREAKOUT/RISING/
+    // ACTIVE/STABLE/FALLING/DEAD), never a tracking tier. trendStateSince
+    // exists for hysteresis (avoid flapping between adjacent states).
+    trendState: trendStateEnum("trend_state"),
+    trendStateSince: instant("trend_state_since"),
     scoreComponents: jsonb("score_components").$type<Record<string, unknown>>(),
     scoredAt: instant("scored_at"),
     scoringVersion: integer("scoring_version"),

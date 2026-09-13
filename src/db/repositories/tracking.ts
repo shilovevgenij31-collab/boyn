@@ -113,6 +113,12 @@ export async function getDueTrackedHashtagsByTier(
  * advance last_scanned_at/next_due_at per its current tier/source/
  * trend_state, bump scans_total, and update consecutive_empty_scans. Never
  * changes tier (Phase 6 lifecycle owns promotion/demotion).
+ *
+ * Also bumps probes_in_tier (Phase 6 brief §37-38's EXPLORATION_DEMOTION
+ * evidence: "2 probes / 4 days") — it's reset to 0 by
+ * analytics-hashtags.ts's applyTierTransition whenever a tier actually
+ * changes, so its value always means "scans since entering the CURRENT
+ * tier", for whichever tier the tag happens to be in.
  */
 export async function recordHashtagScanned(
   db: Database,
@@ -132,6 +138,7 @@ export async function recordHashtagScanned(
       lastScannedAt: params.now,
       nextDueAt,
       scansTotal: sql`${trackedHashtags.scansTotal} + 1`,
+      probesInTier: sql`${trackedHashtags.probesInTier} + 1`,
       consecutiveEmptyScans:
         params.recordsReturned > 0 ? 0 : sql`${trackedHashtags.consecutiveEmptyScans} + 1`,
     })

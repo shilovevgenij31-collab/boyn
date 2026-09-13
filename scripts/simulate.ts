@@ -1,7 +1,8 @@
 /**
- * CLI entry point for the Phase 5 offline 3-day simulation (brief §38).
- * Fully offline: PGlite + FixtureProvider + an injected FixedClock, no
- * network calls, no secrets. Run via:
+ * CLI entry point for the offline multi-day simulation (Phase 5 brief
+ * §38, extended for Phase 6 brief §65-66). Fully offline: PGlite +
+ * FixtureProvider + an injected FixedClock, no network calls, no
+ * secrets. Run via:
  *
  *   npx tsx scripts/simulate.ts
  *   npm run simulate
@@ -12,7 +13,7 @@
 import { runSimulation } from "./simulation/engine.ts";
 
 async function main(): Promise<void> {
-  console.log("[simulate] running a 3-day offline tick simulation (no network, no secrets)...");
+  console.log("[simulate] running a multi-day offline tick + analytics simulation (no network, no secrets)...");
   const summary = await runSimulation();
   console.log("[simulate] done.\n");
   console.log(JSON.stringify(summary, null, 2));
@@ -26,6 +27,11 @@ async function main(): Promise<void> {
   if (!summary.delayedJobCompletedAcrossTicks) invariantFailures.push("the delayed job never completed across multiple ticks");
   if (!summary.replay.noDuplicatesCreated) invariantFailures.push("replaying a tick created duplicate provider_jobs");
   if (summary.refreshSnapshots === 0) invariantFailures.push("no refresh ever occurred");
+  if (summary.postsScored === 0) invariantFailures.push("no posts were ever scored by analytics");
+  if (summary.hashtagDailyStatsRows === 0) invariantFailures.push("no hashtag_daily_stats rows were produced");
+  if (summary.cooccurrenceRows === 0) invariantFailures.push("no co-occurrence rows were produced");
+  if (summary.tierPromotions === 0) invariantFailures.push("no lifecycle tier promotion ever happened");
+  if (summary.tierDemotions === 0) invariantFailures.push("no lifecycle tier demotion ever happened");
 
   if (invariantFailures.length > 0) {
     console.error("\n[simulate] FAILED invariants:");

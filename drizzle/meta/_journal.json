@@ -8,6 +8,13 @@
       "when": 1789238236422,
       "tag": "0000_numerous_albert_cleary",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789245784340,
+      "tag": "0001_slow_firestar",
+      "breakpoints": true
     }
   ]
 }
