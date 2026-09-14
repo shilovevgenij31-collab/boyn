@@ -23,7 +23,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx scripts/db-seed.ts",
     "provider:smoke": "tsx scripts/provider-smoke.ts",
-    "simulate": "tsx scripts/simulate.ts"
+    "simulate": "tsx scripts/simulate.ts",
+    "report": "tsx scripts/report.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

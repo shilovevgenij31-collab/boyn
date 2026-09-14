@@ -32,6 +32,10 @@ async function main(): Promise<void> {
   if (summary.cooccurrenceRows === 0) invariantFailures.push("no co-occurrence rows were produced");
   if (summary.tierPromotions === 0) invariantFailures.push("no lifecycle tier promotion ever happened");
   if (summary.tierDemotions === 0) invariantFailures.push("no lifecycle tier demotion ever happened");
+  if (!summary.report.generated) invariantFailures.push("no DailyReport was ever generated");
+  if (!summary.report.hasYesterdayComparison) invariantFailures.push("the final DailyReport has no vsYesterday comparison");
+  if (!summary.report.exportsValid) invariantFailures.push("Markdown/CSV/JSON export of the final report failed validation");
+  if (!summary.retentionRanCleanly) invariantFailures.push("the final retention sweep did not run cleanly");
 
   if (invariantFailures.length > 0) {
     console.error("\n[simulate] FAILED invariants:");

@@ -39,6 +39,12 @@ import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider
 import { runTick } from "@/jobs/tick.ts";
 import type { TickContext, TickResult } from "@/jobs/types.ts";
 import { runAnalytics, type AnalyticsStats } from "@/jobs/run-analytics.ts";
+import { generateDailyReport } from "@/jobs/generate-daily-report.ts";
+import { runRetention } from "@/jobs/retention.ts";
+import { getDailyReport } from "@/db/repositories/reports.ts";
+import { exportCsv } from "@/core/report/export-csv.ts";
+import { exportJson } from "@/core/report/export-json.ts";
+import { exportMarkdown } from "@/core/report/export-markdown.ts";
 
 type TestDatabase = PgliteDatabase<typeof schema>;
 
@@ -90,6 +96,21 @@ export interface SimulationSummary {
   tierPromotions: number;
   tierDemotions: number;
   refreshPlansUpdated: number;
+  // ---- Phase 7: one DailyReport generated the day before the end of the
+  // run and one at the very end (brief §66), so the second exercises a
+  // real vsYesterday comparison — plus a smoke test of every export and a
+  // final retention sweep, all against the same live simulated state. ----
+  report: {
+    generated: boolean;
+    status: "COMPLETE" | "PARTIAL" | null;
+    todayTopCount: number;
+    stillHotCount: number;
+    risingNowCount: number;
+    hasYesterdayComparison: boolean;
+    clustersCount: number;
+    exportsValid: boolean;
+  };
+  retentionRanCleanly: boolean;
 }
 
 /** Clones a real captured TikTok item with a new id/author/view count —
@@ -222,6 +243,12 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
 
   const tickResults: TickResult[] = [];
   let replaySummary: SimulationSummary["replay"] = { jobsBeforeReplay: 0, jobsAfterReplay: 0, noDuplicatesCreated: true };
+  // Captured ~24h before the run ends (48 ticks at the default 30 min
+  // cadence) — a second DailyReport generated here, before the final one,
+  // is what gives the final report a real previous-day row to compare
+  // against (brief §66).
+  const yesterdaySnapshotTick = totalTicks - Math.round((24 * 60) / tickIntervalMinutes);
+  let yesterdaySnapshot: Date | null = null;
   const analyticsTotals: AnalyticsStats & { runs: number } = {
     runs: 0,
     postsAnalyzed: 0,
@@ -237,6 +264,10 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
   for (let tick = 0; tick < totalTicks; tick++) {
     const result = await runTick(buildTickContext());
     tickResults.push(result);
+
+    if (tick === yesterdaySnapshotTick) {
+      yesterdaySnapshot = new Date(clock.now().getTime());
+    }
 
     // Replay of at least one tick (brief §38): re-run the SAME tick at the
     // SAME simulated instant, without advancing the clock, and confirm it
@@ -304,6 +335,59 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
     (r) => r.submittedAt && r.completedAt && r.completedAt.getTime() - r.submittedAt.getTime() >= MULTI_TICK_THRESHOLD_MS,
   );
 
+  // Phase 7: generate the "yesterday" report first (if the run was long
+  // enough to capture a snapshot 24h before the end), then the real final
+  // report — entirely offline, same PGlite instance, no provider calls.
+  let reportSummary: SimulationSummary["report"] = {
+    generated: false,
+    status: null,
+    todayTopCount: 0,
+    stillHotCount: 0,
+    risingNowCount: 0,
+    hasYesterdayComparison: false,
+    clustersCount: 0,
+    exportsValid: false,
+  };
+  let retentionRanCleanly = false;
+  try {
+    if (yesterdaySnapshot) {
+      await generateDailyReport({ db, clock: new FixedClock(yesterdaySnapshot), market: GLOBAL_MARKET, timezone: "UTC" });
+    }
+    const finalResult = await generateDailyReport({ db, clock, market: GLOBAL_MARKET, timezone: "UTC" });
+    const finalReport = await getDailyReport(db, finalResult.reportDate, GLOBAL_MARKET);
+    if (finalReport) {
+      const json = exportJson(finalReport);
+      const csv = exportCsv(finalReport);
+      const md = exportMarkdown(finalReport);
+      const exportsValid = (() => {
+        try {
+          JSON.parse(json);
+          return csv.charCodeAt(0) === 0xfeff && md.includes("Today Top");
+        } catch {
+          return false;
+        }
+      })();
+      reportSummary = {
+        generated: true,
+        status: finalReport.status,
+        todayTopCount: finalReport.todayTop.length,
+        stillHotCount: finalReport.stillHot.length,
+        risingNowCount: finalReport.risingNow.length,
+        hasYesterdayComparison: finalReport.comparisons.vsYesterday !== null,
+        clustersCount: finalReport.clusters.length,
+        exportsValid,
+      };
+    }
+
+    const retentionResult = await runRetention({ db, clock, dryRun: false });
+    retentionRanCleanly = retentionResult.dryRun === false;
+  } catch {
+    // A report/retention failure must never be mistaken for a tick-
+    // pipeline failure (brief §60) — the summary's own flags above stay
+    // at their safe "not generated"/"did not run" defaults instead of
+    // throwing out of the whole simulation.
+  }
+
   await client.close();
 
   return {
@@ -328,5 +412,7 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
     tierPromotions: analyticsTotals.tierPromotions,
     tierDemotions: analyticsTotals.tierDemotions,
     refreshPlansUpdated: analyticsTotals.refreshPlansUpdated,
+    report: reportSummary,
+    retentionRanCleanly,
   };
 }

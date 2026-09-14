@@ -77,6 +77,18 @@ describe("offline multi-day simulation (tick pipeline + analytics)", () => {
       // a hard-coded tier mutation (brief §66).
       expect(summary.tierPromotions).toBeGreaterThan(0);
       expect(summary.tierDemotions).toBeGreaterThan(0);
+
+      // Phase 7 (brief §66): a real DailyReport was generated at the end
+      // of the run, with a genuine vsYesterday comparison (a second report
+      // was generated ~24h earlier in the same run so this isn't the
+      // first-ever report for its market), and every export format is
+      // valid — all entirely offline, plus a final retention sweep that
+      // completes without destroying the state the run just produced.
+      expect(summary.report.generated).toBe(true);
+      expect(summary.report.status).not.toBeNull();
+      expect(summary.report.hasYesterdayComparison).toBe(true);
+      expect(summary.report.exportsValid).toBe(true);
+      expect(summary.retentionRanCleanly).toBe(true);
     },
     SIMULATION_TEST_TIMEOUT_MS,
   );

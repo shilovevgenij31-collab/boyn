@@ -6,6 +6,7 @@
  * `context` must never carry secrets (tokens, Authorization headers,
  * DATABASE_URL) — callers pass only already-sanitized fields.
  */
+import { and, eq, gte } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import { errorEvents } from "@/db/schema.ts";
 
@@ -27,4 +28,14 @@ export async function recordErrorEvent(db: Database, params: RecordErrorEventPar
     message: params.message,
     context: params.context ?? null,
   });
+}
+
+/** Whether any row for `scope` was recorded at/after `since` — used both
+ * to detect a just-happened failure in an earlier pipeline stage (e.g.
+ * "did runAnalytics record an error during this run?") and to dedupe a
+ * recurring warning (e.g. the daily dead-man check) so it isn't written
+ * again every rerun within the same window. */
+export async function hasErrorEventSince(db: Database, scope: string, since: Date): Promise<boolean> {
+  const rows = await db.select({ id: errorEvents.id }).from(errorEvents).where(and(eq(errorEvents.scope, scope), gte(errorEvents.at, since))).limit(1);
+  return rows.length > 0;
 }

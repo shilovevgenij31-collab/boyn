@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import { collectionRuns, providerJobs } from "@/db/schema.ts";
 import type { ProviderId } from "@/core/domain/provider.ts";
@@ -144,6 +144,15 @@ export async function getOpenCollectionRuns(db: Database, limit: number): Promis
     .from(collectionRuns)
     .where(inArray(collectionRuns.status, ["PLANNED", "RUNNING"]))
     .limit(limit);
+}
+
+/** Most recent `planned_at` across all collection runs — the dead-man
+ * check's signal for "is the external 30-min tick cron still firing"
+ * (Phase 7 brief §54-55). `null` only in a brand-new deployment that has
+ * never run a tick at all. */
+export async function getMostRecentCollectionRunPlannedAt(db: Database): Promise<Date | null> {
+  const rows = await db.select({ plannedAt: collectionRuns.plannedAt }).from(collectionRuns).orderBy(desc(collectionRuns.plannedAt)).limit(1);
+  return rows[0]?.plannedAt ?? null;
 }
 
 export async function getProviderUsageSince(

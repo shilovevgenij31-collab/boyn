@@ -141,3 +141,10 @@ export const TICK_LIMITS = {
  * at 300s; this stays comfortably under that. Configurable via
  * TICK_DEADLINE_MS env override if the deploy needs a different budget. */
 export const DEFAULT_TICK_DEADLINE_MS = 45_000;
+
+/** Phase 7 brief §54: the once-daily route (analytics + report + retention
+ * + dead-man check) gets more headroom than a 30-min collection tick since
+ * it runs once a day and does real per-post/per-hashtag scoring work, but
+ * still stays comfortably under Vercel Hobby's 300s hard kill so the route
+ * always returns a real response instead of being killed mid-write. */
+export const DEFAULT_DAILY_DEADLINE_MS = 240_000;

@@ -11,7 +11,7 @@ Full architecture, data model, provider research, and the phase-by-phase build p
 **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)**. Real provider measurements
 (Phase 1/1B) live in **[docs/PROVIDER_SPIKE.md](docs/PROVIDER_SPIKE.md)**.
 
-## Status: Phase 6 complete (analytics & lifecycle)
+## Status: Phase 7 complete (reports, exports, retention & daily job)
 
 Phases done so far:
 
@@ -56,10 +56,21 @@ Phases done so far:
   own `next_refresh_at` column through a clear boundary. The offline simulation now also runs
   analytics periodically and demonstrates a real lifecycle promotion and demotion from simulated
   evidence.
+- **Phase 7 — Reports, exports, retention & daily job:** a versioned, frozen `DailyReport` v1
+  contract (`src/core/report/`) built entirely from Phase 6's persisted analytics — a strict
+  **Today** section (published within the last 24h, half-open windowed) kept fully separate from
+  **Still Hot** (24-72h old), a platform-floor + creator-cap Top 30 selection, a **Rising Now**
+  section, deterministic hashtag clusters from co-occurrence, and a `vsYesterday` comparison
+  against the previous frozen report. Markdown/CSV/JSON exports (`src/core/report/export-*.ts`)
+  plus a 7-day hashtag-history CSV — all in-memory, no filesystem dependency, RFC-4180 CSV with a
+  UTF-8 BOM. A TTL-based retention sweep (`src/db/repositories/retention.ts`) with a `dryRun`
+  mode, and a once-daily orchestrator (`src/jobs/run-daily.ts`: analytics → report → retention →
+  dead-man check) exposed via an authenticated `/api/cron/daily` route and `vercel.json`'s one
+  allowed Hobby daily cron.
 
-**Not implemented yet:** the daily report/exports, the Telegram bot, and the optional AI layer.
-See `docs/IMPLEMENTATION_PLAN.md` §28 for the full phase list — each phase is a separate,
-reviewable step.
+**Not implemented yet:** the Telegram bot and the optional AI layer. See
+`docs/IMPLEMENTATION_PLAN.md` §28 for the full phase list — each phase is a separate, reviewable
+step.
 
 ## Prerequisites
 
@@ -192,17 +203,81 @@ calibrated**; Phase 11 recalibrates weights/thresholds after real production dat
   (`momentum`, `computeHashtagMomentum`), but any user-facing copy built from them must say "Radar
   momentum" / "growth in our monitored sample" — never a platform-wide claim.
 
+## Daily report, exports & retention (Phase 7)
+
+`src/jobs/run-daily.ts`'s `runDaily()` is the once-daily, framework-independent orchestrator:
+`runAnalytics()` → `generateDailyReport()` → `runRetention()` → a dead-man scheduler check, each
+stage isolated so a failure in one (recorded as an `error_event`, never thrown) can't corrupt or
+block the others or fabricate a `COMPLETE` report from a `PARTIAL`/failed collection day. It's
+exposed as:
+
+```
+POST /api/cron/daily
+Authorization: Bearer <CRON_SECRET>
+```
+
+configured as the one native Vercel Hobby cron in `vercel.json` (`30 6 * * *`, UTC) — **not** a
+replacement for the external 30-min `/api/cron/tick` (still cron-job.org's job, Phase 9); this is
+backup/maintenance only: score what the tick already collected, freeze today's report, prune
+expired rows, and flag a stale scheduler.
+
+**Report window** — a duration-based, half-open partition anchored on the generation instant
+(`Clock`-injected, never DST-sensitive local-day arithmetic):
+
+- **Today**: `windowStart <= publishedAt <= windowEnd` (both inclusive), `windowStart = now - 24h`.
+- **Still Hot**: `windowStart - 48h <= publishedAt < windowStart` (upper exclusive) — i.e. 24-72h
+  old. A post can never land in both sections, and a Still Hot post never consumes a Today slot.
+
+Today's Top 30 (`src/core/report/select-top.ts`) reuses Phase 6's persisted `tier`/`trendState`
+directly — no parallel qualification engine — under three simultaneous constraints: max 2 posts
+per platform-qualified creator (`tiktok:alex` ≠ `instagram:alex`), a per-platform floor of
+`min(available, 8)` (never padded with stale content when a platform has fewer eligible posts),
+and global `TrendScore` ranking. `src/core/report/build-clusters.ts` groups hashtags via
+union-find over Phase 6's co-occurrence edges (Jaccard + minimum viral-post support) — a small
+report-level projection, not new lifecycle analytics.
+
+Every ranked item freezes enough data (`ReportItem`) that nothing downstream needs to re-query the
+mutable `posts` table later — canonical `tiktok.com`/`instagram.com` URLs only, never a
+provider/CDN URL. A report is `PARTIAL` (never a fabricated `COMPLETE`) whenever a real,
+persisted signal says so — a platform's discovery jobs all failed, a run is still unfinished, or
+the monthly budget is exhausted — never inferred from how few posts ended up in the report.
+
+Exports (`src/core/report/export-{markdown,csv,json,hashtag-history}.ts`) are pure string
+builders — no filesystem dependency (Vercel serverless has none), so they return directly usable
+`string`s: Markdown for manual ChatGPT Pro analysis (with a ready-to-paste analysis prompt and
+explicit OBSERVED-vs-ESTIMATED/Radar-momentum caveats), RFC-4180 CSV with a UTF-8 BOM (Excel-safe
+Unicode), and complete JSON preserving `schemaVersion`/`scoringVersion`.
+
+Retention (`src/db/repositories/retention.ts`) sweeps every table against its own TTL
+(`src/config/retention.ts`) — posts by their persisted `tier` (`NOISE` 14d / `WATCH` 30d /
+`VIRAL_QUALIFIED`+`EARLY_BREAKOUT` 180d, an unknown tier conservatively also 180d), snapshots 90d,
+`daily_reports` 365d, and so on — each a plain `DELETE ... WHERE <the same condition a dry run
+counted>`, so `runRetention({ db, clock, dryRun: true })` returns exactly the counts a real sweep
+would delete without touching a row. Active tracking/audit state with no explicit TTL
+(`tracked_hashtags`, `hashtag_tier_events`, `scoring_baselines`, `app_settings`) is never touched.
+
+A local dev helper (`scripts/report.ts`, not part of the runtime path — the route/job never
+depend on it or the filesystem) generates one report against a real `DATABASE_URL` and optionally
+writes its exports to disk for manual inspection:
+
+```bash
+npm run report -- --date 2026-09-12 --market global --out ./out
+npm run report -- --retention-dry-run
+```
+
 ## Project structure
 
 ```
 src/app/          Next.js App Router — thin HTTP adapters only
 src/config/        typed tunables (env, taxonomy, thresholds, scoring, lifecycle, budget, schedule)
 src/core/          framework-independent domain logic (no Next/db/Telegram/provider imports):
-                       domain/scheduling (Phase 5), analytics/categories/lifecycle (Phase 6)
+                       domain/scheduling (Phase 5), analytics/categories/lifecycle (Phase 6),
+                       report (Phase 7 — DailyReport assembly, selection, clusters, exports)
 src/lib/            generic utilities: clock, deadline, errors, logger, exhaustive
 src/providers/    normalization (Phase 2) + production provider adapters/registry (Phase 4)
-src/jobs/           tick-driven collection: plan/submit/poll/ingest (Phase 5) + run-analytics (Phase 6)
-src/db/              schema, migrations, repositories, seed (Phase 3, done)
+src/jobs/           tick-driven collection (Phase 5) + run-analytics (Phase 6) +
+                       generate-daily-report/retention/run-daily (Phase 7)
+src/db/              schema, migrations, repositories (incl. report-data/reports/retention), seed
 src/telegram/     bot commands, rendering, webhook router (Phase 8)
 src/insights/      optional OpenRouter integration (Phase 10)
 test/unit/          unit tests (pure logic, normalization contract tests against real fixtures)
@@ -218,5 +293,5 @@ See `docs/IMPLEMENTATION_PLAN.md` §28 for full detail on each phase:
 
 0. Bootstrap ✅ → 1/1B. Provider spike ✅ → 2. Domain core & normalization ✅ → 3. Database ✅ →
 4. Provider adapters & registry ✅ → 5. Collection orchestration ✅ → 6. Analytics & lifecycle ✅ →
-7. Reports, exports, retention → 8. Telegram bot → 9. Production deployment & scheduling →
+7. Reports, exports, retention ✅ → 8. Telegram bot → 9. Production deployment & scheduling →
 10. Optional AI (`/ideas`) → 11. Calibration & hardening.
