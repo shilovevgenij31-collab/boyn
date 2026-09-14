@@ -88,6 +88,15 @@ export async function getDailyReport(db: Database, reportDate: string, market: M
   return (rows[0]?.payload as unknown as DailyReport) ?? null;
 }
 
+/** The most recent frozen report for this market, regardless of date —
+ * what `/today` and `/export` read (brief §33, §45): "the latest frozen
+ * DailyReport", not necessarily today's calendar date if a run was
+ * missed. */
+export async function getLatestDailyReport(db: Database, market: Market): Promise<DailyReport | null> {
+  const rows = await db.select({ payload: dailyReports.payload }).from(dailyReports).where(eq(dailyReports.market, market)).orderBy(desc(dailyReports.reportDate)).limit(1);
+  return (rows[0]?.payload as unknown as DailyReport) ?? null;
+}
+
 /** The most recent frozen report strictly before `reportDate` for this
  * market — source for the yesterday comparison and `inYesterdayReport`
  * (brief §25-26). `null` when none exists yet (e.g. the very first report
@@ -101,4 +110,45 @@ export async function getPreviousDailyReport(db: Database, reportDate: string, m
     .orderBy(desc(dailyReports.reportDate))
     .limit(1);
   return (rows[0]?.payload as unknown as DailyReport) ?? null;
+}
+
+export interface DailyReportForDelivery {
+  id: number;
+  deliveredAt: Date | null;
+  /** Each entry is `"<piece>:<telegramMessageId>"` (Phase 8 brief §66-67)
+   * — a piece already present here was already sent on a prior (possibly
+   * crashed) delivery attempt and must not be sent again. */
+  telegramMessageIds: string[];
+  payload: DailyReport;
+}
+
+export async function getDailyReportForDelivery(db: Database, reportDate: string, market: Market): Promise<DailyReportForDelivery | null> {
+  const rows = await db
+    .select({ id: dailyReports.id, deliveredAt: dailyReports.deliveredAt, telegramMessageIds: dailyReports.telegramMessageIds, payload: dailyReports.payload })
+    .from(dailyReports)
+    .where(and(eq(dailyReports.reportDate, reportDate), eq(dailyReports.market, market)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return { id: row.id, deliveredAt: row.deliveredAt, telegramMessageIds: row.telegramMessageIds ?? [], payload: row.payload as unknown as DailyReport };
+}
+
+/** Records one delivered "piece" immediately after it's actually sent —
+ * never batched until the end — so a crash between two pieces leaves an
+ * accurate, resumable record of exactly what already went out (brief
+ * §67). Does NOT set `delivered_at`; see `markDailyReportDelivered`. */
+export async function appendDeliveredPiece(db: Database, id: number, piece: string, telegramMessageId: number): Promise<void> {
+  const [row] = await db.select({ telegramMessageIds: dailyReports.telegramMessageIds }).from(dailyReports).where(eq(dailyReports.id, id)).limit(1);
+  const current = row?.telegramMessageIds ?? [];
+  await db
+    .update(dailyReports)
+    .set({ telegramMessageIds: [...current, `${piece}:${telegramMessageId}`] })
+    .where(eq(dailyReports.id, id));
+}
+
+/** Only ever called after every applicable piece has been confirmed sent
+ * (brief §66: "do NOT mark delivered_at before required sending
+ * finishes"). */
+export async function markDailyReportDelivered(db: Database, id: number, deliveredAt: Date): Promise<void> {
+  await db.update(dailyReports).set({ deliveredAt }).where(eq(dailyReports.id, id));
 }

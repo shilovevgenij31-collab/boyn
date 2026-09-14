@@ -24,7 +24,10 @@
     "db:seed": "tsx scripts/db-seed.ts",
     "provider:smoke": "tsx scripts/provider-smoke.ts",
     "simulate": "tsx scripts/simulate.ts",
-    "report": "tsx scripts/report.ts"
+    "report": "tsx scripts/report.ts",
+    "telegram:poll": "tsx scripts/dev-poll.ts",
+    "telegram:set-webhook": "tsx scripts/set-webhook.ts",
+    "telegram:set-commands": "tsx scripts/set-commands.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

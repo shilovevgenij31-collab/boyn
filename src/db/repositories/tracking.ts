@@ -66,6 +66,23 @@ export async function ensureTrackedHashtag(
   return { id: row.id, created: false };
 }
 
+export interface TrackedHashtagLookup {
+  id: number;
+  tier: "CORE" | "ACTIVE" | "EXPLORATION" | "DORMANT";
+}
+
+/** Phase 8's `/untrack` (brief §55) needs to know a tag's CURRENT tier
+ * before deciding how to transition it — `ensureTrackedHashtag` only
+ * ever creates-or-finds without exposing the existing tier. */
+export async function getTrackedHashtag(db: Database, hashtagId: number, platform: Platform, market: string): Promise<TrackedHashtagLookup | null> {
+  const rows = await db
+    .select({ id: trackedHashtags.id, tier: trackedHashtags.tier })
+    .from(trackedHashtags)
+    .where(and(eq(trackedHashtags.hashtagId, hashtagId), eq(trackedHashtags.platform, platform), eq(trackedHashtags.market, market)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 /**
  * Due candidates for one tier group (Phase 5 brief §8-10), oldest-due-first
  * (nulls — never scanned — first). `core/scheduling/tag-selector.ts`'s

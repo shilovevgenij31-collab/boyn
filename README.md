@@ -11,7 +11,7 @@ Full architecture, data model, provider research, and the phase-by-phase build p
 **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)**. Real provider measurements
 (Phase 1/1B) live in **[docs/PROVIDER_SPIKE.md](docs/PROVIDER_SPIKE.md)**.
 
-## Status: Phase 7 complete (reports, exports, retention & daily job)
+## Status: Phase 8 complete (Telegram bot)
 
 Phases done so far:
 
@@ -67,8 +67,22 @@ Phases done so far:
   mode, and a once-daily orchestrator (`src/jobs/run-daily.ts`: analytics → report → retention →
   dead-man check) exposed via an authenticated `/api/cron/daily` route and `vercel.json`'s one
   allowed Hobby daily cron.
+- **Phase 8 — Telegram bot:** a private, authorized-users-only Telegram interface
+  (`src/telegram/`) over the existing backend — no duplicated analytics/scoring/report logic. A
+  thin native-`fetch` Bot API client with bounded 429/5xx/network retry; a secure, idempotent
+  webhook (`/api/telegram/webhook`, `update_id`-deduped via `telegram_updates`); `/today` (the
+  frozen DailyReport, Today Top 30 and Still Hot kept strictly separate), `/rising` and the
+  platform/category filters (`/tiktok`, `/instagram`, `/cosplay`, `/streamers`, `/gaming`, `/pc`,
+  `/playstation` — all fresh LIVE views over current Phase 6 analytics, frozen into a
+  `result_view` the moment each command runs so pagination never reorders mid-browse), `/tags`,
+  `/status`, `/export` (+ `/export 7d`), and a deterministic, metadata-only `/ideas` (no LLM).
+  Admin-only `/refresh`, `/track`, `/untrack`, `/why` reuse the exact same durable
+  collection/tracking primitives Phases 5-7 already built. Automatic DailyReport delivery is
+  idempotent (`daily_reports.delivered_at`/`telegram_message_ids`) and resumable after a partial
+  failure. Local long-polling (`scripts/dev-poll.ts`) and webhook/command setup scripts round it
+  out.
 
-**Not implemented yet:** the Telegram bot and the optional AI layer. See
+**Not implemented yet:** production deployment/scheduling and the optional AI layer. See
 `docs/IMPLEMENTATION_PLAN.md` §28 for the full phase list — each phase is a separate, reviewable
 step.
 
@@ -265,6 +279,59 @@ npm run report -- --date 2026-09-12 --market global --out ./out
 npm run report -- --retention-dry-run
 ```
 
+## Telegram bot (Phase 8)
+
+Private, authorized-users-only. Set these in `.env.local` (see `.env.example` for placeholders —
+never commit real values):
+
+```
+TELEGRAM_BOT_TOKEN=          # from @BotFather
+TELEGRAM_WEBHOOK_SECRET=     # any long random string you generate (crypto.randomBytes(32).toString("hex"))
+ADMIN_TELEGRAM_ID=           # your numeric Telegram user id
+TELEGRAM_ALLOWED_USER_IDS=   # comma-separated numeric user ids allowed to use the bot (admin is implicit)
+TELEGRAM_REPORT_CHAT_ID=     # chat the automatic DailyReport delivery posts to
+```
+
+**Authorization** (`src/telegram/auth.ts`): every command checks `from.id` against
+`TELEGRAM_ALLOWED_USER_IDS`/`ADMIN_TELEGRAM_ID` — never username or display name, which a user can
+change freely. An unauthorized sender gets a short, generic "private bot" reply and nothing else —
+no tracked data, budget, status, or report content ever reaches them. Admin-only commands
+(`/refresh`, `/track`, `/untrack`, `/why`) are additionally gated on `from.id === ADMIN_TELEGRAM_ID`.
+
+**Commands** — normal: `/start` `/help` `/today` `/rising` `/tiktok` `/instagram` `/cosplay`
+`/streamers` `/gaming` `/pc` `/playstation` `/tags` `/status` `/export` `/export 7d` `/ideas`.
+Admin: `/refresh [tiktok|instagram]` `/track <tiktok|instagram|both> <#tag> [exploration|active|core]`
+`/untrack <tiktok|instagram|both> <#tag>` `/why <rank>`. `/today` reads the latest frozen
+DailyReport (Today Top 30 strictly ≤24h, Still Hot 24-72h exposed as a separate button — the
+Phase 7 rule is never blurred in the UI either); `/rising`/`/tiktok`/`/instagram`/the category
+filters compute a fresh ranking over CURRENT Phase 6 analytics at command time and freeze it into
+a `result_views` row so pagination never reorders mid-browse. `/ideas` is a deterministic,
+metadata-only summary — **no LLM in Phase 8**; OpenRouter is Phase 10.
+
+**Local development** (long-polling, no public URL needed):
+
+```bash
+npm run telegram:poll                  # long-polls getUpdates and routes them
+npm run telegram:poll -- --delete-webhook   # first clears any registered webhook (Telegram
+                                             # refuses getUpdates while one is active)
+```
+
+**Production webhook setup** (Phase 9 deploys; these scripts just configure the bot side):
+
+```bash
+npm run telegram:set-webhook -- --base-url=https://your-app.vercel.app
+npm run telegram:set-commands          # registers the public command list (admin commands stay
+                                        # hidden from the menu, reachable via /help for the admin)
+```
+
+`POST /api/telegram/webhook` verifies `X-Telegram-Bot-Api-Secret-Token` against
+`TELEGRAM_WEBHOOK_SECRET` with a timing-safe comparison, fails closed (500) if the secret isn't
+configured, and dedupes by `update_id` (`telegram_updates`) before running any command — a
+webhook redelivery never executes a side effect twice. Automatic DailyReport delivery
+(`src/telegram/deliver-report.ts`) is similarly idempotent: `daily_reports.delivered_at` is only
+set after every message piece is confirmed sent, and a crash mid-delivery resumes without
+re-sending an already-sent piece.
+
 ## Project structure
 
 ```
@@ -278,11 +345,11 @@ src/providers/    normalization (Phase 2) + production provider adapters/registr
 src/jobs/           tick-driven collection (Phase 5) + run-analytics (Phase 6) +
                        generate-daily-report/retention/run-daily (Phase 7)
 src/db/              schema, migrations, repositories (incl. report-data/reports/retention), seed
-src/telegram/     bot commands, rendering, webhook router (Phase 8)
+src/telegram/     Phase 8: client, router, auth, commands/, render/, live-views, delivery
 src/insights/      optional OpenRouter integration (Phase 10)
 test/unit/          unit tests (pure logic, normalization contract tests against real fixtures)
 test/integration/  database integration tests (PGlite) + the offline tick/simulation suite
-scripts/             one-off/dev automation (provider spike, db seed, provider smoke, simulation)
+scripts/             one-off/dev automation (provider spike, db seed, simulation, telegram poll/setup)
 drizzle/              committed SQL migrations, generated from src/db/schema.ts
 docs/                 implementation plan and provider spike findings
 ```
@@ -293,5 +360,5 @@ See `docs/IMPLEMENTATION_PLAN.md` §28 for full detail on each phase:
 
 0. Bootstrap ✅ → 1/1B. Provider spike ✅ → 2. Domain core & normalization ✅ → 3. Database ✅ →
 4. Provider adapters & registry ✅ → 5. Collection orchestration ✅ → 6. Analytics & lifecycle ✅ →
-7. Reports, exports, retention ✅ → 8. Telegram bot → 9. Production deployment & scheduling →
+7. Reports, exports, retention ✅ → 8. Telegram bot ✅ → 9. Production deployment & scheduling →
 10. Optional AI (`/ideas`) → 11. Calibration & hardening.

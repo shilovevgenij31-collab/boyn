@@ -69,8 +69,11 @@ export interface ReportItem {
 
   /** Which window this item was selected under — set by the caller
    * (build-daily-report.ts), not derived from age alone, since Still Hot
-   * and Today use the exact same underlying candidate shape. */
-  window: "TODAY" | "STILL_HOT" | "RISING_NOW" | "EXPORT_ONLY";
+   * and Today use the exact same underlying candidate shape. "LIVE" is a
+   * Phase 8 addition: a Telegram current-state view (`/rising`,
+   * `/tiktok`, category filters, ...) computed at command time rather
+   * than sourced from a frozen DailyReport. */
+  window: "TODAY" | "STILL_HOT" | "RISING_NOW" | "EXPORT_ONLY" | "LIVE";
 
   /** Computed from the previous frozen report by stable postId (brief
    * §26) — never by URL comparison. */

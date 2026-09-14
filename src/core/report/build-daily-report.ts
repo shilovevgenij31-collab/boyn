@@ -96,7 +96,7 @@ export interface BuildDailyReportInput {
  * with at least MEDIUM velocity confidence — ACTIVE, video/reel only,
  * and never a post whose OWN trend state says it's already DEAD. Does
  * not duplicate a second qualification engine; reuses Phase 6's tier. */
-function isRankable(p: CandidatePost): boolean {
+export function isRankable(p: CandidatePost): boolean {
   if (p.availability !== "ACTIVE") return false;
   if (p.contentType !== "video" && p.contentType !== "reel") return false;
   if (p.trendState === "DEAD") return false;
@@ -106,7 +106,7 @@ function isRankable(p: CandidatePost): boolean {
   return false;
 }
 
-function creatorKey(p: CandidatePost): string {
+export function creatorKey(p: CandidatePost): string {
   return p.creatorUsername ? `${p.platform}:${p.creatorUsername}` : `${p.platform}:anon:${p.postId}`;
 }
 
@@ -129,10 +129,12 @@ function truncateCaption(caption: string | null): string | null {
   return caption.length > CAPTION_PREVIEW_MAX_CHARS ? `${caption.slice(0, CAPTION_PREVIEW_MAX_CHARS)}…` : caption;
 }
 
-/** `ageHours` starts null and is filled in by `withAge` once the report's
- * `now` is available — kept as a separate step so this function stays a
- * simple, reusable field mapper. */
-function toReportItem(p: CandidatePost, rank: number, window: ReportItem["window"], inYesterdayReport: boolean): ReportItem {
+/** `ageHours` starts null and is filled in by `applyAge` once `now` is
+ * available — kept as a separate step so this function stays a simple,
+ * reusable field mapper. Exported so Phase 8's Telegram commands can
+ * build the exact same frozen item shape for a LIVE (non-report) view
+ * without duplicating this mapping (brief §71). */
+export function toReportItem(p: CandidatePost, rank: number, window: ReportItem["window"], inYesterdayReport: boolean): ReportItem {
   return {
     rank,
     postId: p.postId,
@@ -162,6 +164,14 @@ function toReportItem(p: CandidatePost, rank: number, window: ReportItem["window
   };
 }
 
+/** Fills `ageHours`, clamped to never go negative (a snapshot observed
+ * fractionally before `publishedAt` due to clock skew must not render as
+ * a negative age). Exported alongside `toReportItem` for Phase 8 LIVE
+ * views. */
+export function applyAge(item: ReportItem, now: Date, publishedAt: Date): ReportItem {
+  return { ...item, ageHours: Math.max(0, (now.getTime() - publishedAt.getTime()) / 3_600_000) };
+}
+
 export function buildDailyReport(input: BuildDailyReportInput): DailyReport {
   const windowEnd = input.now;
   const windowStart = new Date(windowEnd.getTime() - REPORT_WINDOW_HOURS.today * 3_600_000);
@@ -184,9 +194,7 @@ export function buildDailyReport(input: BuildDailyReportInput): DailyReport {
   const risingIds = new Set(risingSelected.map((c) => c.postId));
   const risingPosts = risingPool.filter((c) => risingIds.has(c.postId));
 
-  function withAge(item: ReportItem, publishedAt: Date): ReportItem {
-    return { ...item, ageHours: Math.max(0, (windowEnd.getTime() - publishedAt.getTime()) / 3_600_000) };
-  }
+  const withAge = (item: ReportItem, publishedAt: Date): ReportItem => applyAge(item, windowEnd, publishedAt);
 
   const todayTop: ReportItem[] = todaySelected.map((c, i) => withAge(toReportItem(c.post, i + 1, "TODAY", input.yesterdayPostIds.has(c.postId)), c.post.publishedAt));
   const stillHot: ReportItem[] = stillHotSelected.map((c, i) => withAge(toReportItem(c.post, i + 1, "STILL_HOT", input.yesterdayPostIds.has(c.postId)), c.post.publishedAt));

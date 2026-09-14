@@ -41,7 +41,10 @@ export interface SelectTopConfig {
   platformFloor: number;
 }
 
-function compareCandidates(a: TopCandidate, b: TopCandidate): number {
+/** Exported for Phase 8: Telegram's current (non-report) views —
+ * `/tiktok`, `/instagram`, category filters — need the exact same
+ * deterministic TrendScore ranking, not a forked copy of it. */
+export function compareCandidates(a: TopCandidate, b: TopCandidate): number {
   if (b.trendScore !== a.trendScore) return b.trendScore - a.trendScore;
   if (b.risingScore !== a.risingScore) return b.risingScore - a.risingScore;
   if (b.vph !== a.vph) return b.vph - a.vph;

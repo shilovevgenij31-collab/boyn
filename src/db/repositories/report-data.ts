@@ -6,7 +6,7 @@
  * (never the whole lifetime posts table) and reshapes rows into the
  * plain-data input shapes `core/report/*` expects.
  */
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Database } from "@/db/client.ts";
 import {
   collectionRuns,
@@ -30,6 +30,7 @@ import { HASHTAG_SECTION_MAX } from "@/config/report.ts";
 import type { CandidatePost } from "@/core/report/build-daily-report.ts";
 import type { TagItem, CollectionSummary } from "@/core/report/types.ts";
 import type { ClusterEdge } from "@/core/report/build-clusters.ts";
+import type { HashtagHistoryRow } from "@/core/report/export-hashtag-history.ts";
 import { getProviderUsageSince } from "./runs.ts";
 
 function groupBy<T, K>(items: T[], keyFn: (item: T) => K): Map<K, T[]> {
@@ -391,6 +392,47 @@ export async function getPlatformCollectionOutcomes(db: Database, windowStart: D
     if (r.status === "FAILED" || r.status === "TIMED_OUT") result[r.platform].failed += 1;
   }
   return result;
+}
+
+/** 7-day hashtag-history rows for `/export 7d` (Phase 8 brief §46) —
+ * straight from persisted `hashtag_daily_stats`, most-recent-date-first.
+ * No reclassification: `trendState`/`momentum` are whatever Phase 6
+ * already computed for that day. */
+export async function getHashtagDailyStatsHistory(db: Database, market: string, sinceDateStr: string): Promise<HashtagHistoryRow[]> {
+  const rows = await db
+    .select({
+      date: hashtagDailyStats.date,
+      platform: hashtagDailyStats.platform,
+      market: hashtagDailyStats.market,
+      name: hashtags.name,
+      trendState: hashtagDailyStats.trendState,
+      momentum: hashtagDailyStats.momentum,
+      postsSeen: hashtagDailyStats.postsSeen,
+      viralPosts: hashtagDailyStats.viralPosts,
+      breakoutPosts: hashtagDailyStats.breakoutPosts,
+      distinctCreators: hashtagDailyStats.distinctCreators,
+      medianVph: hashtagDailyStats.medianVph,
+      scans: hashtagDailyStats.scans,
+    })
+    .from(hashtagDailyStats)
+    .innerJoin(hashtags, eq(hashtags.id, hashtagDailyStats.hashtagId))
+    .where(and(eq(hashtagDailyStats.market, market), gte(hashtagDailyStats.date, sinceDateStr)))
+    .orderBy(desc(hashtagDailyStats.date));
+
+  return rows.map((r) => ({
+    date: r.date,
+    platform: r.platform,
+    market: r.market,
+    tag: r.name,
+    trendState: r.trendState,
+    radarMomentum: r.momentum !== null ? Number(r.momentum) : null,
+    radarPostsSeen: r.postsSeen,
+    qualifiedPosts: r.viralPosts + r.breakoutPosts,
+    breakoutPosts: r.breakoutPosts,
+    distinctCreators: r.distinctCreators,
+    medianVph: r.medianVph !== null ? Number(r.medianVph) : null,
+    scans: r.scans,
+  }));
 }
 
 /** Any run still PLANNED/RUNNING at generation time within the window —
