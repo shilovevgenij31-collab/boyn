@@ -21,6 +21,10 @@
 # docs/PROVIDER_SPIKE.md and test/fixtures/** only.
 /.spike
 
+# Vercel CLI local project link (org/project ids — not secret, but local
+# machine state, not a repo concern)
+.vercel
+
 # misc
 .DS_Store
 *.pem

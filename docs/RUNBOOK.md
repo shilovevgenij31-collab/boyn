@@ -15,9 +15,14 @@ Telegram ──webhook──► POST /api/telegram/webhook   (bot commands, admi
 Next.js (Vercel) ──pg──► Neon Postgres              (all durable state)
 ```
 
-- **Production origin:** `https://<project>.vercel.app` (not secret — filled in once deployed).
+- **Production origin:** `https://trend-radar-ashy.vercel.app` (stable alias — not secret; Vercel
+  project `trend-radar`, GitHub-connected to `shilovevgenij31-collab/boyn`).
 - **Database:** Neon Postgres (pooled `DATABASE_URL` for runtime, unpooled `DATABASE_URL_UNPOOLED`
   for migrations).
+- **Vercel CLI (non-interactive):** `VERCEL_TOKEN=<token> npx vercel@latest <command>` — used for
+  the initial `link`/`env add`/`deploy --prod`; a personal access token from
+  [vercel.com/account/tokens](https://vercel.com/account/tokens) plays the same role a browser
+  login would, without needing an interactive session.
 - **Hosting:** Vercel Hobby. Native Vercel cron is used ONLY for the once-daily
   `/api/cron/daily` — the 30-minute collection tick is external (cron-job.org), because Hobby's
   native cron cannot run more than once a day.
