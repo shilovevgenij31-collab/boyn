@@ -4,6 +4,7 @@
  * they stay reachable via `/help` for the admin only, never advertised in
  * Telegram's command menu.
  */
+import "./load-env.ts";
 import { getEnv } from "@/config/env.ts";
 import { createTelegramClient } from "@/telegram/client.ts";
 import type { BotCommand } from "@/telegram/types.ts";

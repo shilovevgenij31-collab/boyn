@@ -5,6 +5,7 @@
  * Usage: npx tsx scripts/set-webhook.ts --base-url=https://your-app.vercel.app
  * (or set APP_BASE_URL in .env.local and omit --base-url)
  */
+import "./load-env.ts";
 import { getEnv } from "@/config/env.ts";
 import { createTelegramClient } from "@/telegram/client.ts";
 

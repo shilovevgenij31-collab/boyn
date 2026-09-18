@@ -9,6 +9,7 @@
  * Usage:
  *   npx tsx scripts/report.ts [--date YYYY-MM-DD] [--market global] [--out ./out] [--retention-dry-run]
  */
+import "./load-env.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getDb, closeDb } from "@/db/client.ts";

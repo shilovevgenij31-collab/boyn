@@ -4,6 +4,7 @@
  * the real, tested src/db/seed.ts through the project's normal `@/`
  * path aliases — see package.json for why tsx specifically).
  */
+import "./load-env.ts";
 import { getDb, closeDb } from "@/db/client.ts";
 import { seedTaxonomy } from "@/db/seed.ts";
 

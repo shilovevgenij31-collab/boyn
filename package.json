@@ -27,7 +27,8 @@
     "report": "tsx scripts/report.ts",
     "telegram:poll": "tsx scripts/dev-poll.ts",
     "telegram:set-webhook": "tsx scripts/set-webhook.ts",
-    "telegram:set-commands": "tsx scripts/set-commands.ts"
+    "telegram:set-commands": "tsx scripts/set-commands.ts",
+    "collection:pause": "tsx scripts/collection-pause.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

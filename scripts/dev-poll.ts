@@ -9,6 +9,7 @@
  *
  * Usage: npx tsx scripts/dev-poll.ts [--delete-webhook]
  */
+import "./load-env.ts";
 import { getDb, closeDb } from "@/db/client.ts";
 import { getEnv } from "@/config/env.ts";
 import { buildTelegramContext } from "@/telegram/build-context.ts";
