@@ -1,7 +1,7 @@
 /**
- * `/status` (Phase 8 brief §43-44) — built entirely from persisted
- * application state; no live provider health request (no Apify/Bright
- * Data API call happens here).
+ * `/status` (Phase 8 brief §43-44; Russian localization — Phase 8/9
+ * hotfix §11) — built entirely from persisted application state; no live
+ * provider health request (no Apify/Bright Data API call happens here).
  */
 import type { TelegramCommandContext } from "../context.ts";
 import { getMostRecentCollectionRunPlannedAt } from "@/db/repositories/runs.ts";
@@ -14,7 +14,7 @@ import { DEFAULT_BUDGET_PROFILE } from "@/config/budget.ts";
 import { escapeHtml } from "../render/escape.ts";
 
 function formatTimestamp(d: Date | null): string {
-  return d ? `${d.toISOString().slice(0, 16).replace("T", " ")} UTC` : "never";
+  return d ? `${d.toISOString().slice(0, 16).replace("T", " ")} UTC` : "ещё не было";
 }
 
 export async function handleStatus(ctx: TelegramCommandContext, chatId: number, isAdminUser: boolean): Promise<void> {
@@ -39,26 +39,26 @@ export async function handleStatus(ctx: TelegramCommandContext, chatId: number, 
   }
 
   const lines: string[] = [];
-  lines.push("<b>Status</b>");
-  lines.push(`Scheduler last tick: ${formatTimestamp(lastTick)}`);
-  lines.push(`Last TikTok discovery: ${formatTimestamp(activity.lastTiktokDiscovery)}`);
-  lines.push(`Last Instagram discovery: ${formatTimestamp(activity.lastInstagramDiscovery)}`);
-  lines.push(`Last refresh: ${formatTimestamp(activity.lastRefresh)}`);
-  lines.push(`Latest report: ${latestReport ? `${escapeHtml(latestReport.reportDate)} (${latestReport.status})` : "none yet"}`);
+  lines.push("<b>Статус</b>");
+  lines.push(`Последний tick: ${formatTimestamp(lastTick)}`);
+  lines.push(`Последний сбор TikTok: ${formatTimestamp(activity.lastTiktokDiscovery)}`);
+  lines.push(`Последний сбор Instagram: ${formatTimestamp(activity.lastInstagramDiscovery)}`);
+  lines.push(`Последний refresh: ${formatTimestamp(activity.lastRefresh)}`);
+  lines.push(`Последний отчёт: ${latestReport ? `${escapeHtml(latestReport.reportDate)} (${latestReport.status === "PARTIAL" ? "неполный" : "полный"})` : "ещё не было"}`);
   lines.push("");
-  lines.push(`<b>Budget</b> (${budget.profile})`);
-  lines.push(`Today: ${budget.usedToday} records · Month: $${budget.estimatedUsdMonth.toFixed(2)} / $${(budget.estimatedUsdMonth + budget.remainingMonthlyUsd).toFixed(2)}`);
+  lines.push(`<b>Бюджет</b> (${budget.profile})`);
+  lines.push(`Сегодня: ${budget.usedToday} записей · за месяц: $${budget.estimatedUsdMonth.toFixed(2)} / $${(budget.estimatedUsdMonth + budget.remainingMonthlyUsd).toFixed(2)}`);
   lines.push("");
-  lines.push(`<b>Providers</b>: ${circuitLines.join(" · ")}`);
+  lines.push(`<b>Провайдеры</b>: ${circuitLines.join(" · ")}`);
   lines.push("");
-  lines.push(`<b>Tracked hashtags</b>: CORE ${tierCounts.CORE} · ACTIVE ${tierCounts.ACTIVE} · EXPLORATION ${tierCounts.EXPLORATION} · DORMANT ${tierCounts.DORMANT}`);
+  lines.push(`<b>Отслеживаемые хэштеги</b>: CORE ${tierCounts.CORE} · ACTIVE ${tierCounts.ACTIVE} · EXPLORATION ${tierCounts.EXPLORATION} · DORMANT ${tierCounts.DORMANT}`);
   lines.push("");
-  lines.push("<b>AI</b>: deterministic only (Phase 8) — no LLM");
+  lines.push("<b>AI</b>: пока только детерминированный анализ, без LLM");
 
   if (isAdminUser) {
     const recentErrors = await getRecentErrorEvents(ctx.db, dayStart, 5);
     lines.push("");
-    lines.push(`<b>Errors (24h)</b>: ${recentErrors.length === 0 ? "none" : ""}`);
+    lines.push(`<b>Ошибки за 24 часа</b>: ${recentErrors.length === 0 ? "нет" : ""}`);
     for (const err of recentErrors) {
       lines.push(`- [${err.severity}] ${escapeHtml(err.scope)}: ${escapeHtml(err.message.slice(0, 100))}`);
     }

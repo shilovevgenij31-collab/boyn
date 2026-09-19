@@ -63,7 +63,7 @@ describe("renderPage — missing metrics / huge metrics", () => {
     const items = [makeItem({ rank: 1, postId: 1, views: null, likes: null, comments: null, shares: null, vph: null, vphKind: "NONE", velocityConfidence: null, trendScore: null, risingScore: null, ageHours: null, creatorUsername: null, captionPreview: null })];
     const page = renderPage(items, 1, "view123456ab", "Header");
     expect(page.text.length).toBeLessThanOrEqual(4096);
-    expect(page.text).not.toContain("0 views"); // null must never render as 0
+    expect(page.text).not.toContain("0 просмотров"); // null must never render as 0
   });
 
   it("never crashes with huge metrics", () => {
@@ -126,10 +126,10 @@ describe("renderPage — pagination bounds", () => {
     const items = Array.from({ length: 7 }, (_, i) => makeItem({ rank: i + 1, postId: i + 1 }));
     const first = renderPage(items, 1, "view123456ab", "Header");
     const navFirst = first.replyMarkup.inline_keyboard[1]!;
-    expect(navFirst.some((b) => b.text.includes("Prev"))).toBe(false);
+    expect(navFirst.some((b) => b.text.includes("Назад"))).toBe(false);
 
     const last = renderPage(items, totalPagesFor(7), "view123456ab", "Header");
     const navLast = last.replyMarkup.inline_keyboard[1]!;
-    expect(navLast.some((b) => b.text.includes("Next"))).toBe(false);
+    expect(navLast.some((b) => b.text.includes("Далее"))).toBe(false);
   });
 });

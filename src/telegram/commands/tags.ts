@@ -17,9 +17,10 @@ export async function handleTags(ctx: TelegramCommandContext, chatId: number): P
   const sections = await getHashtagSections(ctx.db, ctx.market, now, clusterEdges);
 
   const text = [
-    renderTagsSection("🚀 Breakout", sections.breakout.slice(0, SECTION_LIMIT)),
-    renderTagsSection("📈 Rising", sections.rising.slice(0, SECTION_LIMIT)),
-    renderTagsSection("🏷 Top tracked (by qualified posts)", sections.topByQualifiedPosts.slice(0, SECTION_LIMIT)),
+    "<b>Динамика хэштегов внутри Trend Radar</b> (наша наблюдаемая выборка, не платформа целиком)",
+    renderTagsSection("🚀 Прорывные", sections.breakout.slice(0, SECTION_LIMIT)),
+    renderTagsSection("📈 Растущие", sections.rising.slice(0, SECTION_LIMIT)),
+    renderTagsSection("🏷 Топ по числу качественных постов", sections.topByQualifiedPosts.slice(0, SECTION_LIMIT)),
   ].join("\n\n");
 
   await ctx.client.sendMessage({ chat_id: chatId, text: enforceMessageLimit(text), parse_mode: "HTML", disable_web_page_preview: true });

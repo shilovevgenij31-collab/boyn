@@ -1,9 +1,11 @@
 /**
- * Central update dispatch (Phase 8 brief §5, §12, §57-59): the one place
- * that decides what an incoming Telegram Update means. Deterministic and
- * directly callable — both the webhook route (via `after()`) and
- * scripts/dev-poll.ts feed updates through this same function, and tests
- * call it directly with a recording client (brief §12, §76).
+ * Central update dispatch (Phase 8 brief §5, §57-59): the one place that
+ * decides what an incoming Telegram Update means. Deterministic and
+ * directly callable — the webhook route (which now awaits this fully
+ * before responding — see route.ts's module comment for why) and
+ * scripts/dev-poll.ts both feed updates through this same function, and
+ * tests call it directly with a recording client (brief §76). All
+ * user-facing text is Russian (Phase 8/9 production hotfix §6).
  */
 import type { TelegramCommandContext } from "./context.ts";
 import type { TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from "./types.ts";
@@ -60,12 +62,19 @@ const COMMANDS: Record<string, CommandDefinition> = {
   "/why": { adminOnly: true, handler: (ctx, m, args) => handleWhy(ctx, m.chat.id, args) },
 };
 
+/** Production hotfix (brief §5): split on ANY whitespace (space, tab,
+ * newline), not just a literal space — a command followed directly by a
+ * newline (e.g. pasted multi-line text) previously failed to match any
+ * entry in COMMANDS at all, since `indexOf(" ")` never found a boundary
+ * and the whole "/today\nfoo" string was treated as one unmatched
+ * "command" token. */
 function parseCommandLine(text: string): { command: string; args: string } | null {
   const trimmed = text.trim();
   if (!trimmed.startsWith("/")) return null;
-  const spaceIdx = trimmed.indexOf(" ");
-  const rawCommand = spaceIdx === -1 ? trimmed : trimmed.slice(0, spaceIdx);
-  const args = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+  const match = /^(\S+)([\s\S]*)$/.exec(trimmed);
+  if (!match) return null;
+  const rawCommand = match[1]!;
+  const args = match[2]!.trim();
   const command = rawCommand.split("@")[0]!.toLowerCase();
   if (command.length <= 1) return null;
   return { command, args };
@@ -103,7 +112,7 @@ export async function handleMessage(ctx: TelegramCommandContext, message: Telegr
   if (!def) return; // unknown command: ignore safely (brief §10's spirit applied to commands too)
 
   if (def.adminOnly && !isAdmin(userId, ctx.auth)) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: "Admin only." });
+    await ctx.client.sendMessage({ chat_id: chatId, text: "Эта команда доступна только администратору." });
     return;
   }
 
@@ -112,7 +121,7 @@ export async function handleMessage(ctx: TelegramCommandContext, message: Telegr
   } catch (error) {
     await safeRecordError(ctx, `telegram.command${parsed.command}`, error);
     try {
-      await ctx.client.sendMessage({ chat_id: chatId, text: "Something went wrong handling that command." });
+      await ctx.client.sendMessage({ chat_id: chatId, text: "Не удалось выполнить команду. Ошибка записана; попробуйте ещё раз через минуту." });
     } catch {
       /* best effort */
     }
@@ -123,7 +132,7 @@ async function handleStillHotCallback(ctx: TelegramCommandContext, cq: TelegramC
   const chatId = cq.message!.chat.id;
   const report = await getDailyReport(ctx.db, reportDate, ctx.market);
   if (!report || report.stillHot.length === 0) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: "Still Hot data is no longer available for that report." });
+    await ctx.client.sendMessage({ chat_id: chatId, text: "Раздел «Всё ещё в тренде» для этого отчёта больше недоступен." });
     return;
   }
   const header = renderStillHotHeader(report);
@@ -138,7 +147,7 @@ export async function handleCallback(ctx: TelegramCommandContext, cq: TelegramCa
 
   if (!isAuthorized(userId, ctx.auth)) {
     try {
-      await ctx.client.answerCallbackQuery({ callback_query_id: cq.id, text: "Not authorized.", show_alert: true });
+      await ctx.client.answerCallbackQuery({ callback_query_id: cq.id, text: "Нет доступа.", show_alert: true });
     } catch {
       /* best effort */
     }
@@ -177,7 +186,7 @@ export async function handleCallback(ctx: TelegramCommandContext, cq: TelegramCa
   try {
     const view = await getResultView(ctx.db, parsed.viewId, ctx.clock.now());
     if (!view) {
-      await ctx.client.sendMessage({ chat_id: cq.message.chat.id, text: "This view has expired. Please rerun the command." });
+      await ctx.client.sendMessage({ chat_id: cq.message.chat.id, text: "Список устарел. Запустите команду ещё раз." });
       return;
     }
     const page = renderPage(view.items, parsed.page, parsed.viewId, view.headerText);

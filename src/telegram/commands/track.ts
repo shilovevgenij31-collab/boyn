@@ -18,7 +18,7 @@ import { ensureTrackedHashtag } from "@/db/repositories/tracking.ts";
 import { applyTierTransition } from "@/db/repositories/analytics-hashtags.ts";
 import { escapeHtml } from "../render/escape.ts";
 
-export const USAGE = "Usage: /track <tiktok|instagram|both> <#tag> [exploration|active|core]";
+export const USAGE = "Использование: /track <tiktok|instagram|both> <#тег> [exploration|active|core]";
 
 const TIER_ALIASES: Record<string, TrackingTier> = { exploration: "EXPLORATION", active: "ACTIVE", core: "CORE" };
 
@@ -44,7 +44,7 @@ export async function handleTrack(ctx: TelegramCommandContext, chatId: number, a
 
   const normalized = normalizeHashtagToken(parts[1]!);
   if (!normalized) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: `Not a valid hashtag: ${escapeHtml(parts[1]!)}` });
+    await ctx.client.sendMessage({ chat_id: chatId, text: `Некорректный хэштег: ${escapeHtml(parts[1]!)}` });
     return;
   }
 
@@ -52,7 +52,7 @@ export async function handleTrack(ctx: TelegramCommandContext, chatId: number, a
   if (parts[2]) {
     const requested = TIER_ALIASES[parts[2].toLowerCase()];
     if (!requested) {
-      await ctx.client.sendMessage({ chat_id: chatId, text: `Unknown tier "${escapeHtml(parts[2])}". Use exploration, active, or core.` });
+      await ctx.client.sendMessage({ chat_id: chatId, text: `Неизвестный уровень «${escapeHtml(parts[2])}». Используйте exploration, active или core.` });
       return;
     }
     tier = requested;
@@ -61,7 +61,7 @@ export async function handleTrack(ctx: TelegramCommandContext, chatId: number, a
   const now = ctx.clock.now();
   const existingHashtag = await getHashtagByName(ctx.db, normalized);
   if (existingHashtag?.isBlocked) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: `#${escapeHtml(normalized)} is blocked and cannot be tracked.` });
+    await ctx.client.sendMessage({ chat_id: chatId, text: `#${escapeHtml(normalized)} заблокирован и не может отслеживаться.` });
     return;
   }
 
@@ -71,9 +71,9 @@ export async function handleTrack(ctx: TelegramCommandContext, chatId: number, a
     const result = await ensureTrackedHashtag(ctx.db, { hashtagId, platform, market: ctx.market, tier, source: "MANUAL" });
     if (result.created) {
       await applyTierTransition(ctx.db, { trackedHashtagId: result.id, fromTier: null, toTier: tier, reason: "MANUAL_ADMIN", at: now });
-      lines.push(`${platform}: now tracking #${escapeHtml(normalized)} at ${tier}`);
+      lines.push(`${platform}: #${escapeHtml(normalized)} добавлен в отслеживание, уровень ${tier}`);
     } else {
-      lines.push(`${platform}: already tracked`);
+      lines.push(`${platform}: уже отслеживается`);
     }
   }
   await ctx.client.sendMessage({ chat_id: chatId, text: lines.join("\n") });

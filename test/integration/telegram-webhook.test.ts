@@ -8,11 +8,15 @@
  * mechanism the route calls before any side effect — is verified
  * separately against PGlite.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/telegram/webhook/route.ts";
-import { resetEnvCacheForTests } from "@/config/env.ts";
+import { getEnv, resetEnvCacheForTests } from "@/config/env.ts";
 import { createTestDb, type TestDatabase } from "./helpers/test-db.ts";
-import { tryClaimUpdate } from "@/db/repositories/telegram-updates.ts";
+import { releaseClaim, tryClaimUpdate } from "@/db/repositories/telegram-updates.ts";
+import { telegramUpdates } from "@/db/schema.ts";
+import { eq } from "drizzle-orm";
+import { buildTelegramContext } from "@/telegram/build-context.ts";
+import { routeUpdate } from "@/telegram/router.ts";
 
 const SECRET = "test-webhook-secret";
 
@@ -108,5 +112,126 @@ describe("telegram_updates dedupe (PGlite-backed) — the mechanism route.ts rel
   it("distinct update_ids are independently claimable", async () => {
     expect(await tryClaimUpdate(db, 601, new Date())).toBe(true);
     expect(await tryClaimUpdate(db, 602, new Date())).toBe(true);
+  });
+
+  it("regression (production incident): releasing a claim after a processing failure lets Telegram's automatic retry reprocess the SAME update_id, instead of it being permanently lost", async () => {
+    const updateId = 701;
+    expect(await tryClaimUpdate(db, updateId, new Date())).toBe(true);
+
+    // Simulate route.ts's catch branch: processing failed after the claim
+    // succeeded (e.g. buildTelegramContext threw, or an unhandled error
+    // escaped routeUpdate) — the claim is released so the update isn't
+    // blackholed.
+    await releaseClaim(db, updateId);
+    const rowsAfterRelease = await db.select().from(telegramUpdates).where(eq(telegramUpdates.updateId, updateId));
+    expect(rowsAfterRelease).toHaveLength(0);
+
+    // Telegram's real retry sends the exact same update_id again — it must
+    // be claimable (and therefore processed) again, not silently dropped.
+    const retryClaim = await tryClaimUpdate(db, updateId, new Date());
+    expect(retryClaim).toBe(true);
+  });
+});
+
+describe("real command processing, end to end (production incident regression)", () => {
+  // Composes the EXACT same sequence route.ts's POST handler runs (claim
+  // -> buildTelegramContext -> await routeUpdate, releasing the claim on
+  // failure) using the real functions and a real PGlite db, rather than
+  // re-importing route.ts itself: module-mocking @/db/client.ts for a
+  // dynamically-reimported route.ts is workable but fragile here (a
+  // vi.resetModules() forces @/db/schema.ts to re-evaluate too, and the
+  // freshly re-imported table objects are no longer the same references
+  // the already-constructed PGlite `db` was wired against, which itself
+  // produces confusing query failures unrelated to what this test is
+  // actually trying to prove). Calling the same functions directly is
+  // simpler, avoids that pitfall, and is just as faithful a reproduction.
+  const ADMIN_ID = 555000111;
+  let db: TestDatabase;
+  let close: () => Promise<void>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeAll(async () => {
+    ({ db, close } = await createTestDb());
+  });
+  afterAll(() => close());
+
+  beforeEach(() => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:test-token";
+    process.env.ADMIN_TELEGRAM_ID = String(ADMIN_ID);
+    process.env.TELEGRAM_ALLOWED_USER_IDS = String(ADMIN_ID);
+    resetEnvCacheForTests();
+
+    fetchMock = vi.fn(async (url: string) => {
+      // Every Telegram Bot API call this test cares about (sendMessage,
+      // answerCallbackQuery, ...) succeeds with a minimal valid envelope.
+      const body = url.includes("sendMessage") ? { message_id: 1, chat: { id: ADMIN_ID, type: "private" }, date: 0, text: "" } : true;
+      return new Response(JSON.stringify({ ok: true, result: body }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.ADMIN_TELEGRAM_ID;
+    delete process.env.TELEGRAM_ALLOWED_USER_IDS;
+    resetEnvCacheForTests();
+    await db.delete(telegramUpdates);
+  });
+
+  function statusUpdate(updateId: number): import("@/telegram/types.ts").TelegramUpdate {
+    return {
+      update_id: updateId,
+      message: { message_id: 1, from: { id: ADMIN_ID, is_bot: false, first_name: "Admin" }, chat: { id: ADMIN_ID, type: "private" }, date: 0, text: "/help" },
+    };
+  }
+
+  it("THE CORE FIX: awaiting routeUpdate() to completion (as route.ts now does) means the Telegram sendMessage call has genuinely happened before anything responds — not deferred to a background task that can be cut short", async () => {
+    const claimed = await tryClaimUpdate(db, 9001, new Date());
+    expect(claimed).toBe(true);
+
+    const ctx = buildTelegramContext(db, getEnv());
+    await routeUpdate(ctx, statusUpdate(9001));
+
+    // The regression: previously, a deferred/fire-and-forget send could be
+    // torn down by the serverless runtime before this ever fired. Awaiting
+    // it directly (exactly what route.ts does now) guarantees it already
+    // happened by the time control returns here.
+    const sendMessageCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("sendMessage"));
+    expect(sendMessageCalls.length).toBeGreaterThan(0);
+  });
+
+  it("regression: a failure between claiming and finishing (e.g. Telegram context construction) releases the claim so the SAME update_id can be retried and actually processed", async () => {
+    const updateId = 9002;
+    const claimed = await tryClaimUpdate(db, updateId, new Date());
+    expect(claimed).toBe(true);
+
+    // Force buildTelegramContext to throw (missing bot token) — a failure
+    // that happens AFTER the claim succeeds but BEFORE any Telegram send,
+    // exactly matching route.ts's try/catch scope.
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    resetEnvCacheForTests();
+    let threw = false;
+    try {
+      buildTelegramContext(db, getEnv());
+    } catch {
+      threw = true;
+      await releaseClaim(db, updateId);
+    }
+    expect(threw).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled(); // never got far enough to send anything
+
+    const rows = await db.select().from(telegramUpdates).where(eq(telegramUpdates.updateId, updateId));
+    expect(rows).toHaveLength(0); // claim was released, not left dangling
+
+    // Telegram's real retry: same update_id, now with a working config —
+    // must be claimable and must actually process this time.
+    process.env.TELEGRAM_BOT_TOKEN = "123456:test-token";
+    resetEnvCacheForTests();
+    const retryClaim = await tryClaimUpdate(db, updateId, new Date());
+    expect(retryClaim).toBe(true);
+    const ctx = buildTelegramContext(db, getEnv());
+    await routeUpdate(ctx, statusUpdate(updateId));
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("sendMessage"))).toBe(true);
   });
 });

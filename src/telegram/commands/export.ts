@@ -15,8 +15,8 @@ import { exportHashtagHistoryCsv } from "@/core/report/export-hashtag-history.ts
 import { EXPORT_COOLDOWN_MINUTES } from "@/config/telegram.ts";
 
 const EXPORT_COOLDOWN_KEY = "telegram_export_cooldown";
-export const NO_REPORT_MESSAGE = "No daily report has been generated yet. Try again after the next scheduled run.";
-export const COOLDOWN_MESSAGE = `Please wait before requesting another export (cooldown: ${EXPORT_COOLDOWN_MINUTES} min).`;
+export const NO_REPORT_MESSAGE = "Ежедневный отчёт ещё не сформирован. Попробуйте снова после следующего планового запуска.";
+export const COOLDOWN_MESSAGE = `Повторный экспорт пока недоступен. Подождите ${EXPORT_COOLDOWN_MINUTES} мин и попробуйте снова.`;
 
 async function checkAndSetExportCooldown(ctx: TelegramCommandContext, now: Date): Promise<boolean> {
   const last = await getSetting<string>(ctx.db, EXPORT_COOLDOWN_KEY);

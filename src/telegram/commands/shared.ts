@@ -10,7 +10,7 @@ import { renderPage } from "../render/page.ts";
 
 export async function sendPaginatedView(ctx: TelegramCommandContext, chatId: number, viewId: string, items: ReportItem[], headerText: string): Promise<void> {
   if (items.length === 0) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: `${headerText}\n\n(no qualifying posts right now)`, parse_mode: "HTML", disable_web_page_preview: true });
+    await ctx.client.sendMessage({ chat_id: chatId, text: `${headerText}\n\n(подходящих постов пока нет)`, parse_mode: "HTML", disable_web_page_preview: true });
     return;
   }
   const page = renderPage(items, 1, viewId, headerText);

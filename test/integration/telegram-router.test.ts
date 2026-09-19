@@ -71,14 +71,14 @@ describe("Telegram router (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/status", from: { id: UNAUTHORIZED_USER_ID, is_bot: false, first_name: "X" }, chat: { id: UNAUTHORIZED_USER_ID, type: "private" } }) });
       expect(ctx.client.sentMessages).toHaveLength(1);
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/private bot/i);
-      expect(ctx.client.sentMessages[0]!.text).not.toMatch(/budget|circuit|tracked/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/приватный бот/i);
+      expect(ctx.client.sentMessages[0]!.text).not.toMatch(/бюджет|circuit|tracked/i);
     });
 
     it("a normal user requesting an admin-only command is denied", async () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/refresh" }) });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/admin only/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/администратору/i);
     });
 
     it("admin is authorized for normal commands too", async () => {
@@ -125,7 +125,7 @@ describe("Telegram router (PGlite-backed)", () => {
       expect(main.text).toContain(reportDate);
       expect(main.reply_markup!.inline_keyboard[0]!.length).toBeGreaterThan(0);
 
-      const stillHotPrompt = ctx.client.sentMessages.find((m) => m.text.includes("Still Hot"));
+      const stillHotPrompt = ctx.client.sentMessages.find((m) => m.text.includes("Всё ещё в тренде"));
       expect(stillHotPrompt).toBeDefined();
       expect(stillHotPrompt!.reply_markup!.inline_keyboard[0]![0]!.callback_data).toMatch(/^sh:/);
     });
@@ -133,7 +133,7 @@ describe("Telegram router (PGlite-backed)", () => {
     it("with no report yet, says so instead of crashing", async () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/today" }) });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/no daily report/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/отчёт ещё не сформирован/i);
     });
   });
 
@@ -148,7 +148,7 @@ describe("Telegram router (PGlite-backed)", () => {
       await routeUpdate(ctx, { update_id: nextUpdateId(), callback_query: cq });
 
       expect(ctx.client.answeredCallbacks).toHaveLength(1);
-      const stillHotMessage = ctx.client.sentMessages.find((m) => m.text.includes("Still Hot") && m.reply_markup?.inline_keyboard[0]?.some((b) => b.url));
+      const stillHotMessage = ctx.client.sentMessages.find((m) => m.text.includes("Всё ещё в тренде") && m.reply_markup?.inline_keyboard[0]?.some((b) => b.url));
       expect(stillHotMessage).toBeDefined();
     });
   });
@@ -159,8 +159,8 @@ describe("Telegram router (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/rising" }) });
       const main = ctx.client.sentMessages[0]!;
-      expect(main.text).toMatch(/Rising Now/);
-      expect(main.text).toMatch(/Data as of/);
+      expect(main.text).toMatch(/Растут прямо сейчас/);
+      expect(main.text).toMatch(/Данные на/);
     });
   });
 
@@ -169,8 +169,8 @@ describe("Telegram router (PGlite-backed)", () => {
       ["/tiktok", /TikTok/],
       ["/instagram", /Instagram/],
       ["/cosplay", /Cosplay/],
-      ["/streamers", /Streamers/],
-      ["/gaming", /Gaming/],
+      ["/streamers", /Стримеры/],
+      ["/gaming", /Гейминг/],
       ["/pc", /PC/],
       ["/playstation", /PlayStation/],
     ] as const) {
@@ -187,7 +187,7 @@ describe("Telegram router (PGlite-backed)", () => {
       await insertScoredPost(db, { platform: "tiktok", creatorUsername: "pcguy", publishedAt: hoursAgo(2), tier: "VIRAL_QUALIFIED", trendScore: 80, views: 100_000, category: "pc" });
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/gaming" }) });
-      expect(ctx.client.sentMessages[0]!.text).not.toContain("no qualifying posts");
+      expect(ctx.client.sentMessages[0]!.text).not.toContain("подходящих постов пока нет");
     });
   });
 
@@ -200,7 +200,7 @@ describe("Telegram router (PGlite-backed)", () => {
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/tiktok" }) });
       const sent = ctx.client.sentMessages[0]!;
       const navRow = sent.reply_markup!.inline_keyboard[1]!;
-      const nextBtn = navRow.find((b) => b.text.includes("Next"))!;
+      const nextBtn = navRow.find((b) => b.text.includes("Далее"))!;
       const parsed = parsePaginationCallbackData(nextBtn.callback_data!)!;
 
       const cqNext: TelegramCallbackQuery = { id: "cbq-next", from: { id: NORMAL_USER_ID, is_bot: false, first_name: "T" }, message: { message_id: 42, chat: { id: NORMAL_USER_ID, type: "private" }, date: 0 }, data: nextBtn.callback_data };
@@ -209,7 +209,7 @@ describe("Telegram router (PGlite-backed)", () => {
       expect(ctx.client.edits[0]!.message_id).toBe(42);
       expect(ctx.client.edits[0]!.text).toContain("#6"); // page 2 shows items 6-7
 
-      const prevBtn = ctx.client.edits[0]!.reply_markup!.inline_keyboard[1]!.find((b) => b.text.includes("Prev"))!;
+      const prevBtn = ctx.client.edits[0]!.reply_markup!.inline_keyboard[1]!.find((b) => b.text.includes("Назад"))!;
       const cqPrev: TelegramCallbackQuery = { id: "cbq-prev", from: { id: NORMAL_USER_ID, is_bot: false, first_name: "T" }, message: { message_id: 42, chat: { id: NORMAL_USER_ID, type: "private" }, date: 0 }, data: prevBtn.callback_data };
       await routeUpdate(ctx, { update_id: nextUpdateId(), callback_query: cqPrev });
       expect(ctx.client.edits).toHaveLength(2);
@@ -222,7 +222,7 @@ describe("Telegram router (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       const cq: TelegramCallbackQuery = { id: "cbq", from: { id: NORMAL_USER_ID, is_bot: false, first_name: "T" }, message: { message_id: 1, chat: { id: NORMAL_USER_ID, type: "private" }, date: 0 }, data: "pg:doesnotexist12:1" };
       await routeUpdate(ctx, { update_id: nextUpdateId(), callback_query: cq });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/expired/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/устарел/i);
     });
 
     it("a malformed callback never crashes the router", async () => {
@@ -277,12 +277,12 @@ describe("Telegram router (PGlite-backed)", () => {
 
       const ctxNormal = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctxNormal, { update_id: nextUpdateId(), message: message({ text: "/status" }) });
-      expect(ctxNormal.client.sentMessages[0]!.text).toMatch(/Budget/);
-      expect(ctxNormal.client.sentMessages[0]!.text).not.toMatch(/Errors \(24h\)/);
+      expect(ctxNormal.client.sentMessages[0]!.text).toMatch(/Бюджет/);
+      expect(ctxNormal.client.sentMessages[0]!.text).not.toMatch(/Ошибки за 24 часа/);
 
       const ctxAdmin = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctxAdmin, { update_id: nextUpdateId(), message: message({ text: "/status", from: { id: ADMIN_ID, is_bot: false, first_name: "Admin" }, chat: { id: ADMIN_ID, type: "private" } }) });
-      expect(ctxAdmin.client.sentMessages[0]!.text).toMatch(/Errors \(24h\)/);
+      expect(ctxAdmin.client.sentMessages[0]!.text).toMatch(/Ошибки за 24 часа/);
     });
   });
 
@@ -293,7 +293,7 @@ describe("Telegram router (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: message({ text: "/ideas" }) });
       const text = ctx.client.sentMessages[0]!.text;
-      expect(text).toMatch(/did not watch/i);
+      expect(text).toMatch(/не просматривал сами видео/i);
       expect(text).not.toMatch(/openrouter|gpt|claude/i);
     });
   });

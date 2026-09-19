@@ -7,14 +7,14 @@ describe("formatCompactNumber", () => {
     expect(formatCompactNumber(0)).toBe("0");
   });
 
-  it("renders thousands with one decimal", () => {
-    expect(formatCompactNumber(1200)).toBe("1.2K");
-    expect(formatCompactNumber(12_400)).toBe("12.4K");
-    expect(formatCompactNumber(1000)).toBe("1K");
+  it("renders thousands with a Russian comma-decimal and 'тыс.' unit", () => {
+    expect(formatCompactNumber(1200)).toBe("1,2 тыс.");
+    expect(formatCompactNumber(12_400)).toBe("12,4 тыс.");
+    expect(formatCompactNumber(1000)).toBe("1 тыс.");
   });
 
-  it("renders millions with one decimal", () => {
-    expect(formatCompactNumber(2_300_000)).toBe("2.3M");
+  it("renders millions with a Russian comma-decimal and 'млн' unit", () => {
+    expect(formatCompactNumber(2_300_000)).toBe("2,3 млн");
   });
 
   it("is deterministic across repeated calls (no locale dependence)", () => {
@@ -25,19 +25,19 @@ describe("formatCompactNumber", () => {
 
 describe("formatAge", () => {
   it("renders minutes under an hour", () => {
-    expect(formatAge(42 / 60)).toBe("42m");
+    expect(formatAge(42 / 60)).toBe("42 мин");
   });
 
   it("renders hours and minutes", () => {
-    expect(formatAge(3 + 18 / 60)).toBe("3h 18m");
+    expect(formatAge(3 + 18 / 60)).toBe("3 ч 18 мин");
   });
 
   it("renders days and hours at 24h+", () => {
-    expect(formatAge(28)).toBe("1d 4h");
+    expect(formatAge(28)).toBe("1 д 4 ч");
   });
 
   it("never goes negative", () => {
-    expect(formatAge(-1)).toBe("0m");
+    expect(formatAge(-1)).toBe("0 мин");
   });
 });
 
@@ -51,18 +51,18 @@ describe("confidenceBadge", () => {
 });
 
 describe("formatVph", () => {
-  it("never renders a missing vph as 0/h", () => {
+  it("never renders a missing vph as 0/ч", () => {
     const text = formatVph(null, "NONE", null);
-    expect(text).not.toContain("0/h");
-    expect(text).toContain("unavailable");
+    expect(text).not.toContain("0/ч");
+    expect(text).toMatch(/неизвестна/);
   });
 
   it("distinguishes OBSERVED from ESTIMATED", () => {
     const observed = formatVph(138_000, "OBSERVED", "HIGH");
     const estimated = formatVph(5_200, "ESTIMATED", "LOW");
     expect(observed).toContain("+");
-    expect(observed).not.toContain("est.");
+    expect(observed).not.toContain("оцен.");
     expect(estimated).toContain("~");
-    expect(estimated).toContain("est.");
+    expect(estimated).toContain("оцен.");
   });
 });

@@ -1,24 +1,15 @@
 /**
- * One compact ranked-post card (Phase 8 brief §24-30). Every field comes
- * straight from a frozen `ReportItem` — no reclassification, no
- * re-querying `posts` (brief §71). Null provider metrics are omitted,
- * never shown as `0` (CLAUDE.md rule 8 / brief §24).
+ * One compact ranked-post card (Phase 8 brief §24-30; Russian localization
+ * — Phase 8/9 production hotfix §6-8, §14). Every field comes straight
+ * from a frozen `ReportItem` — no reclassification, no re-querying
+ * `posts` (brief §71). Null provider metrics are omitted, never shown as
+ * `0` (CLAUDE.md rule 8 / brief §24). Platform names (TikTok/Instagram)
+ * stay untranslated.
  */
 import type { ReportItem } from "@/core/report/types.ts";
 import { escapeHtml, truncateUnicode } from "./escape.ts";
 import { formatAge, formatCompactNumber, formatVph } from "./format.ts";
-
-const TREND_STATE_EMOJI: Partial<Record<string, string>> = {
-  BREAKOUT: "🚀",
-  RISING: "📈",
-  ACTIVE: "🔥",
-  STABLE: "➖",
-  FALLING: "📉",
-  DEAD: "💀",
-  NEW: "🆕",
-};
-
-const PLATFORM_LABEL: Record<string, string> = { tiktok: "TikTok", instagram: "Instagram" };
+import { PLATFORM_LABEL, TREND_STATE_EMOJI, TREND_STATE_LABEL_RU } from "./labels.ts";
 
 /** Brief §28: <=120 visible characters, Unicode-safe. */
 const CAPTION_PREVIEW_MAX_CHARS = 120;
@@ -38,21 +29,21 @@ function engagementRatioPct(item: ReportItem): number | null {
 export function renderCard(item: ReportItem, position: number): string {
   const lines: string[] = [];
 
-  const stateEmoji = item.trendState ? (TREND_STATE_EMOJI[item.trendState] ?? "") : "";
-  const stateLabel = item.trendState ? `${stateEmoji} ${item.trendState}`.trim() : "";
+  const stateEmoji = item.trendState ? TREND_STATE_EMOJI[item.trendState] : "";
+  const stateLabel = item.trendState ? `${stateEmoji} ${TREND_STATE_LABEL_RU[item.trendState]}`.trim() : "";
   const headline = [`<b>#${position} · ${PLATFORM_LABEL[item.platform] ?? item.platform}</b>`, stateLabel].filter((s) => s.length > 0).join(" · ");
   lines.push(`🔥 ${headline}`);
 
   const metricsParts: string[] = [];
-  if (item.views !== null) metricsParts.push(`<b>${formatCompactNumber(item.views)}</b> views`);
+  if (item.views !== null) metricsParts.push(`<b>${formatCompactNumber(item.views)}</b> просмотров`);
   metricsParts.push(`<b>${formatVph(item.vph, item.vphKind, item.velocityConfidence)}</b>`);
-  if (item.ageHours !== null) metricsParts.push(`${formatAge(item.ageHours)} old`);
+  if (item.ageHours !== null) metricsParts.push(`возраст ${formatAge(item.ageHours)}`);
   if (metricsParts.length > 0) lines.push(metricsParts.join(" · "));
 
   const scoreParts: string[] = [];
-  if (item.trendScore !== null) scoreParts.push(`Score <b>${item.trendScore}</b>`);
+  if (item.trendScore !== null) scoreParts.push(`TrendScore <b>${item.trendScore}</b>`);
   const er = engagementRatioPct(item);
-  if (er !== null) scoreParts.push(`ER ${er.toFixed(1)}%`);
+  if (er !== null) scoreParts.push(`вовлечённость ${er.toFixed(1)}%`);
   if (item.comments !== null) scoreParts.push(`💬 ${formatCompactNumber(item.comments)}`);
   if (item.shares !== null) scoreParts.push(`🔁 ${formatCompactNumber(item.shares)}`);
   if (scoreParts.length > 0) lines.push(scoreParts.join(" · "));

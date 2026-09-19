@@ -49,7 +49,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
     it("with no report yet, says so instead of crashing", async () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/export") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/no daily report/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/отчёт ещё не сформирован/i);
       expect(ctx.client.sentDocuments).toHaveLength(0);
     });
 
@@ -76,7 +76,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
 
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/export") });
       expect(ctx.client.sentDocuments).toHaveLength(3); // no new documents
-      expect(ctx.client.sentMessages.some((m) => /cooldown/i.test(m.text))).toBe(true);
+      expect(ctx.client.sentMessages.some((m) => /повторный экспорт пока недоступен/i.test(m.text))).toBe(true);
     });
 
     it("/export 7d sends one CSV built from hashtag_daily_stats", async () => {
@@ -113,7 +113,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       await seedTrackedHashtag(db, "cosplay", "tiktok", "CORE", NOW);
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/accepted/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/поставлен в очередь/i);
 
       const runs = await db.select().from(collectionRuns).where(eq(collectionRuns.kind, "MANUAL"));
       expect(runs).toHaveLength(1);
@@ -125,7 +125,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
     it("nothing due: no tracked hashtags to scan", async () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/no due hashtags/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/нет хэштегов, которые пора сканировать/i);
     });
 
     it("cooldown: a second /refresh for the same platform within 30 min is denied", async () => {
@@ -133,10 +133,10 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       const clock = new FixedClock(NOW);
       const ctx = buildTestTelegramContext(db, clock);
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/accepted/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/поставлен в очередь/i);
 
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[1]!.text).toMatch(/cooldown/i);
+      expect(ctx.client.sentMessages[1]!.text).toMatch(/повторный запуск пока недоступен/i);
     });
 
     it("budget exhausted: refuses once the monthly LEAN ceiling is hit", async () => {
@@ -146,7 +146,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
 
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/budget exhausted/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/бюджет.*исчерпан/i);
     });
 
     it("collection_paused: refuses while paused", async () => {
@@ -154,7 +154,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       await setCollectionPaused(db, true, NOW);
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh tiktok") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/paused/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/на паузе/i);
     });
 
     it("provider circuit open with no fallback (Instagram): reports provider unavailable", async () => {
@@ -165,14 +165,14 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       }
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh instagram") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/no provider currently available/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/провайдер временно недоступен/i);
     });
 
     it("never says anything implying a direct Instagram post-URL refresh happened", async () => {
       await seedTrackedHashtag(db, "playstation", "instagram", "CORE", NOW);
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/refresh instagram") });
-      expect(ctx.client.sentMessages[0]!.text).not.toMatch(/refreshing instagram posts by url/i);
+      expect(ctx.client.sentMessages[0]!.text).not.toMatch(/обновление постов instagram по ссылке/i);
     });
   });
 
@@ -193,7 +193,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/track tiktok #dupe active") });
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/track tiktok #dupe exploration") });
-      expect(ctx.client.sentMessages[1]!.text).toMatch(/already tracked/i);
+      expect(ctx.client.sentMessages[1]!.text).toMatch(/уже отслеживается/i);
 
       const [hashtag] = await db.select().from(hashtags).where(eq(hashtags.name, "dupe"));
       const [tracked] = await db.select().from(trackedHashtags).where(eq(trackedHashtags.hashtagId, hashtag!.id));
@@ -214,7 +214,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
 
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/track tiktok #blockedtag") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/blocked/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/заблокирован/i);
 
       const tracked = await db.select().from(trackedHashtags).where(eq(trackedHashtags.hashtagId, hashtagId));
       expect(tracked).toHaveLength(0);
@@ -252,14 +252,14 @@ describe("Telegram admin commands (PGlite-backed)", () => {
     it("a tag never tracked on that platform is reported safely", async () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/untrack tiktok #neverheardofit") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/not tracked/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/не отслеживается/i);
     });
 
     it("an already-DORMANT tag reports as such", async () => {
       await seedTrackedHashtag(db, "alreadydormant", "tiktok", "DORMANT", NOW);
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/untrack tiktok #alreadydormant") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/already DORMANT/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/уже переведён в DORMANT/i);
     });
   });
 
@@ -302,10 +302,10 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/why 1") });
       const text = ctx.client.sentMessages[0]!.text;
-      expect(text).toMatch(/VPH: \+2K\/h/); // OBSERVED kind: "+" prefix, no "est." suffix
-      expect(text).not.toMatch(/est\./);
-      expect(text).toContain("Acceleration: unavailable");
-      expect(text).not.toMatch(/Acceleration:.*\braw 0\b/);
+      expect(text).toMatch(/Скорость роста: \+2 тыс\.\/ч/); // OBSERVED kind: "+" prefix, no "оцен." suffix
+      expect(text).not.toMatch(/оцен\./);
+      expect(text).toContain("Ускорение: недоступно");
+      expect(text).not.toMatch(/Ускорение:.*\bсырое значение 0\b/);
     });
 
     it("an out-of-range rank is reported safely", async () => {
@@ -313,7 +313,7 @@ describe("Telegram admin commands (PGlite-backed)", () => {
       await seedDailyReport(db, new FixedClock(NOW));
       const ctx = buildTestTelegramContext(db, new FixedClock(NOW));
       await routeUpdate(ctx, { update_id: nextUpdateId(), message: adminMessage("/why 999") });
-      expect(ctx.client.sentMessages[0]!.text).toMatch(/no post at rank/i);
+      expect(ctx.client.sentMessages[0]!.text).toMatch(/не найден/i);
     });
   });
 });

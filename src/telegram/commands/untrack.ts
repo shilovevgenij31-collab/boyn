@@ -15,7 +15,7 @@ import { getTrackedHashtag } from "@/db/repositories/tracking.ts";
 import { applyTierTransition } from "@/db/repositories/analytics-hashtags.ts";
 import { escapeHtml } from "../render/escape.ts";
 
-export const USAGE = "Usage: /untrack <tiktok|instagram|both> <#tag>";
+export const USAGE = "Использование: /untrack <tiktok|instagram|both> <#тег>";
 
 function parsePlatforms(token: string): Platform[] | null {
   const lower = token.toLowerCase();
@@ -39,13 +39,13 @@ export async function handleUntrack(ctx: TelegramCommandContext, chatId: number,
 
   const normalized = normalizeHashtagToken(parts[1]!);
   if (!normalized) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: `Not a valid hashtag: ${escapeHtml(parts[1]!)}` });
+    await ctx.client.sendMessage({ chat_id: chatId, text: `Некорректный хэштег: ${escapeHtml(parts[1]!)}` });
     return;
   }
 
   const hashtag = await getHashtagByName(ctx.db, normalized);
   if (!hashtag) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: `#${escapeHtml(normalized)} is not tracked anywhere.` });
+    await ctx.client.sendMessage({ chat_id: chatId, text: `#${escapeHtml(normalized)} нигде не отслеживается.` });
     return;
   }
 
@@ -54,11 +54,11 @@ export async function handleUntrack(ctx: TelegramCommandContext, chatId: number,
   for (const platform of platforms) {
     const tracked = await getTrackedHashtag(ctx.db, hashtag.id, platform, ctx.market);
     if (!tracked) {
-      lines.push(`${platform}: not tracked`);
+      lines.push(`${platform}: не отслеживается`);
       continue;
     }
     if (tracked.tier === "DORMANT") {
-      lines.push(`${platform}: already DORMANT`);
+      lines.push(`${platform}: уже переведён в DORMANT`);
       continue;
     }
     // CORE only ever auto-transitions never (core/lifecycle/hashtag-
@@ -66,7 +66,7 @@ export async function handleUntrack(ctx: TelegramCommandContext, chatId: number,
     // "human decision" that module's own doc comment reserves for CORE,
     // so it's allowed here.
     await applyTierTransition(ctx.db, { trackedHashtagId: tracked.id, fromTier: tracked.tier, toTier: "DORMANT", reason: "MANUAL_ADMIN", at: now });
-    lines.push(`${platform}: moved to DORMANT`);
+    lines.push(`${platform}: переведён в DORMANT; история сохранена`);
   }
   await ctx.client.sendMessage({ chat_id: chatId, text: lines.join("\n") });
 }

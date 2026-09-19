@@ -42,9 +42,9 @@ export function renderPage(items: ReportItem[], requestedPage: number, viewId: s
   const urlRow: InlineKeyboardButton[] = pageItems.map((item, i) => ({ text: `▶ ${start + i + 1}`, url: item.canonicalUrl }));
 
   const navRow: InlineKeyboardButton[] = [];
-  if (page > 1) navRow.push({ text: "◀ Prev", callback_data: buildPaginationCallbackData(viewId, page - 1) });
+  if (page > 1) navRow.push({ text: "◀ Назад", callback_data: buildPaginationCallbackData(viewId, page - 1) });
   navRow.push({ text: `${page}/${totalPages}`, callback_data: buildPaginationCallbackData(viewId, page) });
-  if (page < totalPages) navRow.push({ text: "Next ▶", callback_data: buildPaginationCallbackData(viewId, page + 1) });
+  if (page < totalPages) navRow.push({ text: "Далее ▶", callback_data: buildPaginationCallbackData(viewId, page + 1) });
 
   const keyboard: InlineKeyboardButton[][] = urlRow.length > 0 ? [urlRow, navRow] : [navRow];
 

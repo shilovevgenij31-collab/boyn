@@ -86,12 +86,12 @@ async function planManualDiscovery(ctx: TelegramCommandContext, platform: Platfo
 }
 
 const OUTCOME_TEXT: Record<RefreshOutcome, string> = {
-  accepted: "manual discovery accepted — it will submit on the next tick",
-  cooldown: `on cooldown (${REFRESH_COOLDOWN_MINUTES} min between manual refreshes)`,
-  budget_exhausted: "budget exhausted this month",
-  provider_unavailable: "no provider currently available (circuit open)",
-  collection_paused: "collection is paused",
-  nothing_due: "no due hashtags to scan right now",
+  accepted: "внеплановый сбор поставлен в очередь, запустится на следующем тике",
+  cooldown: `повторный запуск пока недоступен (не чаще раза в ${REFRESH_COOLDOWN_MINUTES} мин)`,
+  budget_exhausted: "автоматический бюджет на этот месяц исчерпан; новый платный сбор не запущен",
+  provider_unavailable: "провайдер временно недоступен (сработал circuit breaker)",
+  collection_paused: "сбор данных сейчас на паузе",
+  nothing_due: "сейчас нет хэштегов, которые пора сканировать",
 };
 
 export async function handleRefresh(ctx: TelegramCommandContext, chatId: number, args: string): Promise<void> {
@@ -100,7 +100,7 @@ export async function handleRefresh(ctx: TelegramCommandContext, chatId: number,
   const platforms: Platform[] = arg === "tiktok" || arg === "instagram" ? [arg] : arg === "" ? [...PLATFORMS] : [];
 
   if (platforms.length === 0) {
-    await ctx.client.sendMessage({ chat_id: chatId, text: "Usage: /refresh, /refresh tiktok, or /refresh instagram" });
+    await ctx.client.sendMessage({ chat_id: chatId, text: "Использование: /refresh, /refresh tiktok или /refresh instagram" });
     return;
   }
 
