@@ -35,6 +35,10 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   TELEGRAM_WEBHOOK_SECRET: telegramSecretToken.optional(),
   ADMIN_TELEGRAM_ID: numericIdString.optional(),
+  // Comma-separated list of numeric Telegram user ids granted admin
+  // access, additive alongside ADMIN_TELEGRAM_ID (multi-admin support —
+  // Phase 8/9 hotfix); parsed downstream.
+  TELEGRAM_ADMIN_USER_IDS: z.string().optional(),
   // Comma-separated list of numeric Telegram user ids; parsed downstream.
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional(),
   TELEGRAM_REPORT_CHAT_ID: z.string().optional(),

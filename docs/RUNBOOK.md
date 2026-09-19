@@ -218,6 +218,7 @@ Rotating any of these requires only an env update + redeploy — never a code ch
 - [ ] `POST /api/cron/daily` with correct `Authorization` → 200, no exception
 - [ ] Telegram `getMe` returns the expected bot username
 - [ ] `ADMIN_TELEGRAM_ID` / `TELEGRAM_ALLOWED_USER_IDS` / `TELEGRAM_REPORT_CHAT_ID` configured
+- [ ] `TELEGRAM_ADMIN_USER_IDS` (optional, comma-separated) set only if a second admin is needed — additive to `ADMIN_TELEGRAM_ID`, never a replacement
 - [ ] `telegram:set-commands` run against the production bot
 - [ ] `telegram:set-webhook` run against the production origin
 - [ ] cron-job.org job enabled (every 30 min, correct `Authorization` header)

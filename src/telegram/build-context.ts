@@ -18,7 +18,7 @@ import { CircuitBreaker } from "@/providers/circuit-breaker.ts";
 import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
 import { createTelegramClient } from "./client.ts";
-import { parseAdminId, parseAllowedUserIds } from "./auth.ts";
+import { parseAllowedUserIds, resolveAdminIds } from "./auth.ts";
 import type { TelegramCommandContext } from "./context.ts";
 
 export function buildTelegramContext(db: Database, env: Env): TelegramCommandContext {
@@ -42,7 +42,7 @@ export function buildTelegramContext(db: Database, env: Env): TelegramCommandCon
     client: createTelegramClient(env.TELEGRAM_BOT_TOKEN),
     market: env.DEFAULT_MARKET ?? GLOBAL_MARKET,
     timezone: env.REPORT_TZ ?? "UTC",
-    auth: { allowedUserIds: parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS), adminId: parseAdminId(env.ADMIN_TELEGRAM_ID) },
+    auth: { allowedUserIds: parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS), adminIds: resolveAdminIds(env.ADMIN_TELEGRAM_ID, env.TELEGRAM_ADMIN_USER_IDS) },
     reportChatId: env.TELEGRAM_REPORT_CHAT_ID ? Number(env.TELEGRAM_REPORT_CHAT_ID) : null,
     providers: registry,
     circuitBreaker,

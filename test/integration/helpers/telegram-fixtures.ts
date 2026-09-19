@@ -66,7 +66,7 @@ export function buildTestTelegramContext(db: TestDatabase, clock: FixedClock, ov
     clock,
     market: GLOBAL_MARKET,
     timezone: "UTC",
-    auth: { allowedUserIds: new Set([NORMAL_USER_ID]), adminId: ADMIN_ID },
+    auth: { allowedUserIds: new Set([NORMAL_USER_ID]), adminIds: new Set([ADMIN_ID]) },
     reportChatId: REPORT_CHAT_ID,
     providers: new ProviderRegistry(providers, DEFAULT_REGISTRY_CONFIG),
     circuitBreaker: new CircuitBreaker(new DbCircuitBreakerStore(db), clock),
