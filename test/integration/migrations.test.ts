@@ -14,7 +14,8 @@ describe("migrations", () => {
       expect(tableNames).toContain("post_snapshots");
       expect(tableNames).toContain("hashtags");
       expect(tableNames).toContain("tracked_hashtags");
-      expect(tableNames.length).toBe(21);
+      expect(tableNames).toContain("telegram_users");
+      expect(tableNames.length).toBe(22);
     } finally {
       await close();
     }

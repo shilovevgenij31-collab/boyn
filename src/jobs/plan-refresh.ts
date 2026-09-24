@@ -52,7 +52,7 @@ export async function planRefresh(ctx: TickContext): Promise<PlanRefreshResult> 
 
   let provider;
   try {
-    provider = await ctx.providers.resolveAvailable("tiktok", "REFRESH", ctx.circuitBreaker);
+    provider = await ctx.providers.resolveAvailable("tiktok", "REFRESH", ctx.circuitBreaker, ctx.quotaTracker);
   } catch (error) {
     if (isProviderError(error)) {
       await finalizeCollectionRun(ctx.db, run.id, { status: "SKIPPED", now, recordsUsed: 0, errorSummary: error.message });

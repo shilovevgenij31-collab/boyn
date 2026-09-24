@@ -80,6 +80,12 @@ function defaultErrorCode(status: number): ProviderErrorCode {
   if (status === 401 || status === 403) return "AUTH";
   if (status === 404) return "NOT_FOUND";
   if (status === 429) return "RATE_LIMIT";
+  // 402 Payment Required — Apify returns this for "not enough usage/
+  // credits to run a paid actor" (Phase 8/9 hotfix, production incident:
+  // this previously fell into the generic BAD_INPUT bucket below, which
+  // hid a real account-quota condition from both the circuit breaker and
+  // registry.ts's fallback routing).
+  if (status === 402) return "QUOTA";
   if (status >= 400 && status < 500) return "BAD_INPUT";
   return "UPSTREAM";
 }

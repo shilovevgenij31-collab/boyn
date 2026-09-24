@@ -1,5 +1,7 @@
 import { CircuitBreaker } from "@/providers/circuit-breaker.ts";
 import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
+import { ProviderQuotaTracker } from "@/providers/quota-tracker.ts";
+import { DbProviderQuotaStore } from "@/providers/db-provider-quota-store.ts";
 import { DEFAULT_REGISTRY_CONFIG, ProviderRegistry, type RegistryConfig } from "@/providers/registry.ts";
 import type { FixtureProvider } from "@/providers/fixture/provider.ts";
 import { Deadline } from "@/lib/deadline.ts";
@@ -44,6 +46,7 @@ export function buildTestTickContext(params: BuildTestTickContextParams): TickCo
     db: params.db,
     providers: new ProviderRegistry(providers, params.registryConfig ?? DEFAULT_REGISTRY_CONFIG),
     circuitBreaker: new CircuitBreaker(new DbCircuitBreakerStore(params.db), params.clock),
+    quotaTracker: new ProviderQuotaTracker(new DbProviderQuotaStore(params.db), params.clock),
     clock: params.clock,
     // A large default so tests that advance the FixedClock across several
     // simulated ticks (while reusing one TickContext/Deadline instance)

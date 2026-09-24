@@ -25,7 +25,7 @@ async function handle(request: Request): Promise<NextResponse> {
 
   try {
     const db = getDb();
-    const ctx = buildDailyContext(db, env);
+    const ctx = await buildDailyContext(db, env);
     const result = await runDaily(ctx);
     return NextResponse.json({ ok: true, result });
   } catch (error) {

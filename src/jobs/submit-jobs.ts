@@ -105,6 +105,15 @@ export async function submitPendingJobs(ctx: TickContext): Promise<SubmitJobsRes
       if (isCircuitEligibleFailure(error)) {
         await ctx.circuitBreaker.recordFailure(circuitKey, error);
       }
+      if (isProviderError(error) && error.code === "QUOTA") {
+        // Production incident (Phase 8/9 hotfix Part C): QUOTA doesn't
+        // trip the circuit breaker (isCircuitEligibleFailure excludes it
+        // deliberately — it's an account condition, not an outage), but
+        // routing still needs to know this provider is unusable right
+        // now so the next planning pass can fall back — see
+        // registry.ts's resolveAvailable + quota-tracker.ts.
+        await ctx.quotaTracker.recordExhausted(row.provider, row.platform, jobTypeToOperation(row.jobType));
+      }
       const message = isProviderError(error) ? error.message : error instanceof Error ? error.message : String(error);
       await markJobSubmitFailed(ctx.db, id, message, ctx.clock.now());
       result.failed += 1;

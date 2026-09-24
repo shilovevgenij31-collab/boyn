@@ -34,6 +34,8 @@ import { GLOBAL_MARKET } from "@/core/domain/market.ts";
 import { FixtureProvider, type FixtureJobPlan } from "@/providers/fixture/provider.ts";
 import { CircuitBreaker } from "@/providers/circuit-breaker.ts";
 import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
+import { ProviderQuotaTracker } from "@/providers/quota-tracker.ts";
+import { DbProviderQuotaStore } from "@/providers/db-provider-quota-store.ts";
 import { DEFAULT_REGISTRY_CONFIG, ProviderRegistry } from "@/providers/registry.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
 import { runTick } from "@/jobs/tick.ts";
@@ -224,12 +226,14 @@ export async function runSimulation(options: SimulationOptions = {}): Promise<Si
   };
   const registry = new ProviderRegistry(providers, DEFAULT_REGISTRY_CONFIG);
   const circuitBreaker = new CircuitBreaker(new DbCircuitBreakerStore(db), clock);
+  const quotaTracker = new ProviderQuotaTracker(new DbProviderQuotaStore(db), clock);
 
   function buildTickContext(): TickContext {
     return {
       db,
       providers: registry,
       circuitBreaker,
+      quotaTracker,
       clock,
       // A fresh Deadline per tick, generous enough never to trip in this
       // offline simulation — mirrors jobs/build-context.ts's real

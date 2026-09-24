@@ -19,6 +19,7 @@ import { persistNormalizedObservation } from "@/db/repositories/posts.ts";
 import { recordHashtagScanned } from "@/db/repositories/tracking.ts";
 import { recordRefreshCompletion } from "@/db/repositories/posts.ts";
 import { normalizeProviderPost } from "@/providers/normalize.ts";
+import { estimateCostUsd } from "@/providers/cost.ts";
 import { computeNextRefreshAt } from "@/core/scheduling/refresh-planner.ts";
 import { JOB_LEASE_MS, TICK_LIMITS } from "@/config/schedule.ts";
 import type { DiscoveryJobPersistedInput, PartialReason, RefreshJobPersistedInput, TickContext } from "./types.ts";
@@ -177,7 +178,12 @@ async function ingestOneJob(ctx: TickContext, row: ProviderJobRow): Promise<{ pe
     }
   }
 
-  await markJobIngested(ctx.db, row.id, { recordsReturned: persisted, recordsQuarantined: quarantined, ingestedAt: observedAt });
+  await markJobIngested(ctx.db, row.id, {
+    recordsReturned: persisted,
+    recordsQuarantined: quarantined,
+    ingestedAt: observedAt,
+    costEstUsd: estimateCostUsd(row.provider, persisted),
+  });
   return { persisted, quarantined };
 }
 

@@ -44,7 +44,7 @@ export async function deliverDailyReport(ctx: TelegramCommandContext, reportDate
 
   const report = row.payload;
   const now = ctx.clock.now();
-  const header = `${renderReportHeader(report)}\n\n<b>Today Top ${report.todayTop.length}</b>`;
+  const header = `${renderReportHeader(report)}\n\n<b>Топ дня: ${report.todayTop.length}</b>`;
 
   if (!hasPiece(row.telegramMessageIds, "main")) {
     const viewId = await createResultView(ctx.db, {
@@ -61,9 +61,14 @@ export async function deliverDailyReport(ctx: TelegramCommandContext, reportDate
   }
 
   if (report.stillHot.length > 0 && !hasPiece(row.telegramMessageIds, "stillhot")) {
+    // Same text/button as commands/today.ts's on-demand path (production
+    // hotfix Part G/incident: this automatic-delivery path previously had
+    // its own separate, never-translated English copy that told the user
+    // to resend /today instead of just tapping a button here directly).
     const sent = await ctx.client.sendMessage({
       chat_id: ctx.reportChatId,
-      text: `🔥 ${report.stillHot.length} more posts are Still Hot (24-72h old) — send /today again and tap "Show Still Hot" to see them.`,
+      text: `♨️ Ещё ${report.stillHot.length} постов «Всё ещё в тренде» (24–72 ч) — нажмите ниже, чтобы посмотреть.`,
+      reply_markup: { inline_keyboard: [[{ text: "♨️ Показать «Всё ещё в тренде»", callback_data: `sh:${reportDate}` }]] },
     });
     await appendDeliveredPiece(ctx.db, row.id, "stillhot", sent.message_id);
   }

@@ -219,6 +219,7 @@ Rotating any of these requires only an env update + redeploy — never a code ch
 - [ ] Telegram `getMe` returns the expected bot username
 - [ ] `ADMIN_TELEGRAM_ID` / `TELEGRAM_ALLOWED_USER_IDS` / `TELEGRAM_REPORT_CHAT_ID` configured
 - [ ] `TELEGRAM_ADMIN_USER_IDS` (optional, comma-separated) set only if a second admin is needed — additive to `ADMIN_TELEGRAM_ID`, never a replacement
+- [ ] New users can instead be granted access in-bot: an unknown `/start` creates a PENDING `telegram_users` row and notifies every current admin with «✅ Разрешить» / «🛡 Сделать админом» / «❌ Отклонить» buttons — no manual numeric-id lookup needed for a normal grant
 - [ ] `telegram:set-commands` run against the production bot
 - [ ] `telegram:set-webhook` run against the production origin
 - [ ] cron-job.org job enabled (every 30 min, correct `Authorization` header)

@@ -91,6 +91,19 @@ describe("providerFetch", () => {
     }
   });
 
+  it("classifies a 402 as QUOTA and does not retry it (production incident regression: Apify's 'not-enough-usage-to-run-paid-actor')", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(402, { error: { type: "not-enough-usage-to-run-paid-actor", message: "insufficient credits" } }),
+    );
+    try {
+      await providerFetch("https://example.com/x", { provider: "test", operation: "op", maxAttempts: 3 });
+      expect.unreachable();
+    } catch (error) {
+      expect(isProviderError(error) && error.code).toBe("QUOTA");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("respects maxAttempts: 1 (no retry at all, even for a retryable status)", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(503, {}));
     await expect(

@@ -13,7 +13,7 @@ import { DEFAULT_DAILY_DEADLINE_MS } from "@/config/schedule.ts";
 import { buildTelegramContext } from "@/telegram/build-context.ts";
 import type { RunDailyParams } from "./run-daily.ts";
 
-export function buildDailyContext(db: Database, env: Env): RunDailyParams {
+export async function buildDailyContext(db: Database, env: Env): Promise<RunDailyParams> {
   // Telegram delivery is best-effort (brief §24-27): if it isn't
   // configured at all (no TELEGRAM_BOT_TOKEN), `buildTelegramContext`
   // throws by design (it's meant for entry points that require it) — here
@@ -21,7 +21,7 @@ export function buildDailyContext(db: Database, env: Env): RunDailyParams {
   // failing the whole pipeline.
   let telegramContext;
   try {
-    telegramContext = buildTelegramContext(db, env);
+    telegramContext = await buildTelegramContext(db, env);
   } catch {
     telegramContext = undefined;
   }

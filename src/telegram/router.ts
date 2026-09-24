@@ -11,6 +11,7 @@ import type { TelegramCommandContext } from "./context.ts";
 import type { TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from "./types.ts";
 import { isAdmin, isAuthorized } from "./auth.ts";
 import { parsePaginationCallbackData } from "./callbacks.ts";
+import { ADMIN_CALLBACK_DENIED_MESSAGE, handleAccessDecisionCallback, handleAccessRequest } from "./access-request.ts";
 import { getResultView } from "@/db/repositories/result-views.ts";
 import { getDailyReport } from "@/db/repositories/reports.ts";
 import { createResultView } from "@/db/repositories/result-views.ts";
@@ -94,6 +95,20 @@ export async function handleMessage(ctx: TelegramCommandContext, message: Telegr
   if (userId === undefined) return; // no identifiable sender — nothing safe to do
 
   if (!isAuthorized(userId, ctx.auth)) {
+    // Production hotfix (Part H-J): an unknown user's /start starts a
+    // durable access request instead of a dead-end "private bot" reply.
+    // Any OTHER command from an unauthorized sender keeps the original
+    // no-data-leak denial — this never creates a request row from
+    // arbitrary unauthorized traffic, only a deliberate /start.
+    const parsed = message.text ? parseCommandLine(message.text) : null;
+    if (parsed?.command === "/start" && message.from) {
+      try {
+        await handleAccessRequest(ctx, chatId, message.from);
+      } catch (error) {
+        await safeRecordError(ctx, "telegram.access-request", error);
+      }
+      return;
+    }
     try {
       await ctx.client.sendMessage({ chat_id: chatId, text: PRIVATE_BOT_MESSAGE, disable_web_page_preview: true });
     } catch {
@@ -154,7 +169,42 @@ export async function handleCallback(ctx: TelegramCommandContext, cq: TelegramCa
     return;
   }
 
-  if (!cq.data || !cq.message) {
+  if (!cq.data) {
+    try {
+      await ctx.client.answerCallbackQuery({ callback_query_id: cq.id });
+    } catch {
+      /* best effort */
+    }
+    return;
+  }
+
+  // Access-decision callbacks (Part K) never need cq.message (they act on
+  // a target userId encoded in cq.data, not "the message this button is
+  // attached to") and are gated by isAdmin, not just isAuthorized above —
+  // a normal authorized user must never be able to approve/deny anyone.
+  if (cq.data.startsWith("access:")) {
+    if (!isAdmin(userId, ctx.auth)) {
+      try {
+        await ctx.client.answerCallbackQuery({ callback_query_id: cq.id, text: ADMIN_CALLBACK_DENIED_MESSAGE, show_alert: true });
+      } catch {
+        /* best effort */
+      }
+      return;
+    }
+    try {
+      await ctx.client.answerCallbackQuery({ callback_query_id: cq.id });
+    } catch {
+      /* best effort */
+    }
+    try {
+      await handleAccessDecisionCallback(ctx, cq);
+    } catch (error) {
+      await safeRecordError(ctx, "telegram.callback.access", error);
+    }
+    return;
+  }
+
+  if (!cq.message) {
     try {
       await ctx.client.answerCallbackQuery({ callback_query_id: cq.id });
     } catch {

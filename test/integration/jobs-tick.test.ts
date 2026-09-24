@@ -406,6 +406,7 @@ describe("Phase 5 tick state machine", () => {
       db,
       providers: new ProviderRegistry({ apify: wrapFixtureAsProvider("apify", apify) }, DEFAULT_REGISTRY_CONFIG),
       circuitBreaker: buildTestTickContext({ db, clock, apify }).circuitBreaker,
+      quotaTracker: buildTestTickContext({ db, clock, apify }).quotaTracker,
       clock,
       deadline,
       market: "global",

@@ -10,6 +10,7 @@ import type { DailyReport, MetricDelta } from "@/core/report/types.ts";
 import { escapeHtml } from "./escape.ts";
 import { formatCompactNumber } from "./format.ts";
 import { PLATFORM_LABEL } from "./labels.ts";
+import { translatePartialReason } from "./partial-reasons.ts";
 
 function formatDelta(delta: MetricDelta): string {
   if (delta.previous === null || delta.delta === null) return `${delta.current} (нет данных за вчера)`;
@@ -24,7 +25,8 @@ export function renderReportHeader(report: DailyReport): string {
   lines.push(`Рынок: ${escapeHtml(report.market)} · окно закрыто в ${new Date(report.window.end).toISOString().slice(11, 16)} UTC`);
 
   if (report.status === "PARTIAL") {
-    const reasons = report.partialReasons.length > 0 ? ` — ${report.partialReasons.map((r) => escapeHtml(r)).join(", ")}` : "";
+    const reasons =
+      report.partialReasons.length > 0 ? ` — ${report.partialReasons.map((r) => escapeHtml(translatePartialReason(r))).join(", ")}` : "";
     lines.push(`⚠️ <b>Данные неполные</b>${reasons}`);
   } else {
     lines.push("✅ Данные собраны полностью");

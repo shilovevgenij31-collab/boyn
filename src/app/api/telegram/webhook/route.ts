@@ -73,7 +73,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const ctx = buildTelegramContext(db, env);
+    const ctx = await buildTelegramContext(db, env);
     await routeUpdate(ctx, parsed.update);
   } catch (error) {
     logger.error("telegram webhook processing failed", { message: error instanceof Error ? error.message : String(error) });

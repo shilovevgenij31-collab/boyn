@@ -21,7 +21,7 @@ async function main(): Promise<void> {
   const deleteWebhookFlag = process.argv.slice(2).includes("--delete-webhook");
   const env = getEnv();
   const db = getDb();
-  const ctx = buildTelegramContext(db, env);
+  const ctx = await buildTelegramContext(db, env);
 
   const me = await ctx.client.getMe();
   console.log(`[dev-poll] polling as @${me.username}`);

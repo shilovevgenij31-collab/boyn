@@ -252,6 +252,10 @@ export interface MarkIngestedParams {
   recordsReturned: number;
   recordsQuarantined: number;
   ingestedAt: Date;
+  /** Conservative per-record estimate (providers/cost.ts) — string for
+   * the `numeric` column, computed once by the caller (never re-derived
+   * here) so a replay of this same terminal write can't double-count it. */
+  costEstUsd: string;
 }
 
 export async function markJobIngested(db: Database, id: number, params: MarkIngestedParams): Promise<void> {
@@ -262,6 +266,7 @@ export async function markJobIngested(db: Database, id: number, params: MarkInge
       recordsReturned: params.recordsReturned,
       recordsQuarantined: params.recordsQuarantined,
       ingestedAt: params.ingestedAt,
+      costEstUsd: params.costEstUsd,
       leaseUntil: null,
     })
     .where(eq(providerJobs.id, id));

@@ -116,6 +116,11 @@ export const jobStatusEnum = pgEnum("job_status", [
 export const reportStatusEnum = pgEnum("report_status", ["COMPLETE", "PARTIAL"]);
 export const aiInsightStatusEnum = pgEnum("ai_insight_status", ["PENDING", "SUCCEEDED", "FAILED"]);
 export const errorSeverityEnum = pgEnum("error_severity", ["INFO", "WARN", "ERROR", "FATAL"]);
+/** Phase 8/9 hotfix — durable Telegram access management (Part H/I): env
+ * vars (ADMIN_TELEGRAM_ID/TELEGRAM_ADMIN_USER_IDS/TELEGRAM_ALLOWED_USER_IDS)
+ * remain bootstrap/superadmin access and are never affected by this table. */
+export const telegramUserRoleEnum = pgEnum("telegram_user_role", ["USER", "ADMIN"]);
+export const telegramUserStatusEnum = pgEnum("telegram_user_status", ["PENDING", "ACTIVE", "DENIED"]);
 
 // ---------------------------------------------------------------------------
 // Content: posts, snapshots, hashtags, associations
@@ -565,6 +570,28 @@ export const quarantinedItems = pgTable("quarantined_items", {
 export const telegramUpdates = pgTable("telegram_updates", {
   updateId: bigint("update_id", { mode: "number" }).primaryKey(),
   receivedAt: instant("received_at").notNull(),
+});
+
+/** Durable Telegram access registry (Phase 8/9 hotfix Part H/I) — an
+ * in-bot access-request/approval flow so granting a new user doesn't
+ * require the owner to manually discover a numeric Telegram id through a
+ * third-party bot first. `user_id` (never `username`, which Telegram lets
+ * anyone change) is the actual identity; `username`/`first_name`/`chat_id`
+ * are denormalized display/notification metadata only, refreshed on every
+ * `/start` (auth.ts never reads them for authorization). Env-configured
+ * ids (ADMIN_TELEGRAM_ID, TELEGRAM_ADMIN_USER_IDS, TELEGRAM_ALLOWED_USER_IDS)
+ * are bootstrap/superadmin access, entirely independent of this table. */
+export const telegramUsers = pgTable("telegram_users", {
+  userId: bigint("user_id", { mode: "number" }).primaryKey(),
+  chatId: bigint("chat_id", { mode: "number" }),
+  username: text("username"),
+  firstName: text("first_name"),
+  role: telegramUserRoleEnum("role").notNull().default("USER"),
+  status: telegramUserStatusEnum("status").notNull().default("PENDING"),
+  requestedAt: instant("requested_at").notNull(),
+  approvedAt: instant("approved_at"),
+  approvedBy: bigint("approved_by", { mode: "number" }),
+  updatedAt: instant("updated_at").notNull(),
 });
 
 export const errorEvents = pgTable("error_events", {

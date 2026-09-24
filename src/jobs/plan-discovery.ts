@@ -100,7 +100,7 @@ async function planDiscoveryForPlatform(
 
   let provider;
   try {
-    provider = await ctx.providers.resolveAvailable(platform, "DISCOVERY", ctx.circuitBreaker);
+    provider = await ctx.providers.resolveAvailable(platform, "DISCOVERY", ctx.circuitBreaker, ctx.quotaTracker);
   } catch (error) {
     if (isProviderError(error)) {
       await finalizeCollectionRun(ctx.db, run.id, {

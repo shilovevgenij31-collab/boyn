@@ -18,6 +18,7 @@ import type { Env } from "@/config/env.ts";
 import { ProviderError } from "./errors.ts";
 import type { ProviderOperation } from "./circuit-breaker.ts";
 import type { CircuitBreaker } from "./circuit-breaker.ts";
+import type { ProviderQuotaTracker } from "./quota-tracker.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "./provider.ts";
 
 export interface RegistryConfig {
@@ -123,10 +124,19 @@ export class ProviderRegistry {
   }
 
   /**
-   * Circuit-aware selection: primary if its circuit is closed/half-open,
-   * else fallback under the same condition, else throws. Doesn't itself
-   * record success/failure — the caller does that around the actual
-   * submit call (this only decides which provider to try).
+   * Circuit-aware selection: primary if its circuit is closed/half-open
+   * AND it isn't currently QUOTA-exhausted, else fallback under the same
+   * condition, else throws. Doesn't itself record success/failure — the
+   * caller does that around the actual submit call (this only decides
+   * which provider to try).
+   *
+   * `quotaTracker` is optional and additive (Phase 8/9 hotfix Part C): a
+   * provider can be QUOTA-exhausted (e.g. Apify's free-tier usage/credits
+   * ran out — a real HTTP 402) without ever tripping the circuit breaker,
+   * since errors.ts's isCircuitEligibleFailure deliberately excludes
+   * QUOTA from circuit-breaker failure counting (an account/billing
+   * condition, not "the provider is down"). Callers that don't pass a
+   * tracker get the original circuit-only behavior unchanged.
    *
    * Deliberately does NOT call `resolve()` (which eagerly instantiates
    * BOTH primary and fallback to validate the full routing table): a
@@ -140,12 +150,13 @@ export class ProviderRegistry {
     platform: Platform,
     operation: ProviderOperation,
     circuitBreaker: CircuitBreaker,
+    quotaTracker?: ProviderQuotaTracker,
   ): Promise<SocialDataProvider> {
     const primaryId = this.primaryProviderId(platform, operation);
     const primary = this.getProviderInstance(primaryId);
     this.assertSupports(primary, platform, operation);
 
-    if (await circuitBreaker.isAvailable({ provider: primary.id as ProviderId, platform, operation })) {
+    if (await this.isUsable(primary.id as ProviderId, platform, operation, circuitBreaker, quotaTracker)) {
       return primary;
     }
 
@@ -153,7 +164,7 @@ export class ProviderRegistry {
     if (fallbackId) {
       const fallback = this.getProviderInstance(fallbackId);
       this.assertSupports(fallback, platform, operation);
-      if (await circuitBreaker.isAvailable({ provider: fallback.id as ProviderId, platform, operation })) {
+      if (await this.isUsable(fallback.id as ProviderId, platform, operation, circuitBreaker, quotaTracker)) {
         return fallback;
       }
     }
@@ -162,8 +173,20 @@ export class ProviderRegistry {
       "UPSTREAM",
       "registry",
       operation,
-      `no available provider for ${platform} ${operation}: primary (${primary.id}) circuit open${fallbackId ? `, fallback (${fallbackId}) circuit open` : ", no fallback configured"}`,
+      `no available provider for ${platform} ${operation}: primary (${primary.id}) unavailable${fallbackId ? `, fallback (${fallbackId}) unavailable` : ", no fallback configured"}`,
     );
+  }
+
+  private async isUsable(
+    provider: ProviderId,
+    platform: Platform,
+    operation: ProviderOperation,
+    circuitBreaker: CircuitBreaker,
+    quotaTracker: ProviderQuotaTracker | undefined,
+  ): Promise<boolean> {
+    if (!(await circuitBreaker.isAvailable({ provider, platform, operation }))) return false;
+    if (quotaTracker && (await quotaTracker.isExhausted(provider, platform, operation))) return false;
+    return true;
   }
 
   private primaryProviderId(platform: Platform, operation: ProviderOperation): ProviderId {

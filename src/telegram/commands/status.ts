@@ -47,7 +47,7 @@ export async function handleStatus(ctx: TelegramCommandContext, chatId: number, 
   lines.push(`Последний отчёт: ${latestReport ? `${escapeHtml(latestReport.reportDate)} (${latestReport.status === "PARTIAL" ? "неполный" : "полный"})` : "ещё не было"}`);
   lines.push("");
   lines.push(`<b>Бюджет</b> (${budget.profile})`);
-  lines.push(`Сегодня: ${budget.usedToday} записей · за месяц: $${budget.estimatedUsdMonth.toFixed(2)} / $${(budget.estimatedUsdMonth + budget.remainingMonthlyUsd).toFixed(2)}`);
+  lines.push(`Сегодня: ${budget.usedToday} записей · за месяц (оценка): $${budget.estimatedUsdMonth.toFixed(2)} / $${(budget.estimatedUsdMonth + budget.remainingMonthlyUsd).toFixed(2)}`);
   lines.push("");
   lines.push(`<b>Провайдеры</b>: ${circuitLines.join(" · ")}`);
   lines.push("");

@@ -19,9 +19,18 @@ import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
 import { createTelegramClient } from "./client.ts";
 import { parseAllowedUserIds, resolveAdminIds } from "./auth.ts";
+import { getActiveTelegramAuthIds } from "@/db/repositories/telegram-users.ts";
 import type { TelegramCommandContext } from "./context.ts";
 
-export function buildTelegramContext(db: Database, env: Env): TelegramCommandContext {
+/**
+ * Async since Phase 8/9 hotfix Part L: normal/admin authorization is now
+ * the union of env-configured ids (bootstrap/superadmin — never affected
+ * by DB state) and `telegram_users` rows with status=ACTIVE, resolved
+ * ONCE per request here and merged into the same plain Sets
+ * `TelegramAuthConfig` already used — auth.ts's isAuthorized/isAdmin stay
+ * pure, synchronous, and completely unchanged.
+ */
+export async function buildTelegramContext(db: Database, env: Env): Promise<TelegramCommandContext> {
   if (!env.TELEGRAM_BOT_TOKEN) {
     throw new Error("buildTelegramContext: TELEGRAM_BOT_TOKEN is not set");
   }
@@ -36,13 +45,19 @@ export function buildTelegramContext(db: Database, env: Env): TelegramCommandCon
   const registry = new ProviderRegistry(providers, buildRegistryConfigFromEnv(env));
   const circuitBreaker = new CircuitBreaker(new DbCircuitBreakerStore(db), systemClock);
 
+  const envAllowedUserIds = parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS);
+  const envAdminIds = resolveAdminIds(env.ADMIN_TELEGRAM_ID, env.TELEGRAM_ADMIN_USER_IDS);
+  const dbActive = await getActiveTelegramAuthIds(db);
+  const allowedUserIds = new Set([...envAllowedUserIds, ...dbActive.userIds]);
+  const adminIds = new Set([...envAdminIds, ...dbActive.adminUserIds]);
+
   return {
     db,
     clock: systemClock,
     client: createTelegramClient(env.TELEGRAM_BOT_TOKEN),
     market: env.DEFAULT_MARKET ?? GLOBAL_MARKET,
     timezone: env.REPORT_TZ ?? "UTC",
-    auth: { allowedUserIds: parseAllowedUserIds(env.TELEGRAM_ALLOWED_USER_IDS), adminIds: resolveAdminIds(env.ADMIN_TELEGRAM_ID, env.TELEGRAM_ADMIN_USER_IDS) },
+    auth: { allowedUserIds, adminIds },
     reportChatId: env.TELEGRAM_REPORT_CHAT_ID ? Number(env.TELEGRAM_REPORT_CHAT_ID) : null,
     providers: registry,
     circuitBreaker,

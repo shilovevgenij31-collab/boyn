@@ -190,7 +190,7 @@ describe("real command processing, end to end (production incident regression)",
     const claimed = await tryClaimUpdate(db, 9001, new Date());
     expect(claimed).toBe(true);
 
-    const ctx = buildTelegramContext(db, getEnv());
+    const ctx = await buildTelegramContext(db, getEnv());
     await routeUpdate(ctx, statusUpdate(9001));
 
     // The regression: previously, a deferred/fire-and-forget send could be
@@ -213,7 +213,7 @@ describe("real command processing, end to end (production incident regression)",
     resetEnvCacheForTests();
     let threw = false;
     try {
-      buildTelegramContext(db, getEnv());
+      await buildTelegramContext(db, getEnv());
     } catch {
       threw = true;
       await releaseClaim(db, updateId);
@@ -230,7 +230,7 @@ describe("real command processing, end to end (production incident regression)",
     resetEnvCacheForTests();
     const retryClaim = await tryClaimUpdate(db, updateId, new Date());
     expect(retryClaim).toBe(true);
-    const ctx = buildTelegramContext(db, getEnv());
+    const ctx = await buildTelegramContext(db, getEnv());
     await routeUpdate(ctx, statusUpdate(updateId));
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("sendMessage"))).toBe(true);
   });

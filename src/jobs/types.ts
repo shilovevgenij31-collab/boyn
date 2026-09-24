@@ -8,6 +8,7 @@ import type { Database } from "@/db/client.ts";
 import type { Clock } from "@/lib/clock.ts";
 import type { Deadline } from "@/lib/deadline.ts";
 import type { CircuitBreaker } from "@/providers/circuit-breaker.ts";
+import type { ProviderQuotaTracker } from "@/providers/quota-tracker.ts";
 import type { ProviderRegistry } from "@/providers/registry.ts";
 import type { Market } from "@/core/domain/market.ts";
 import type { BudgetProfileName } from "@/config/budget.ts";
@@ -21,6 +22,7 @@ export interface TickContext {
   db: Database;
   providers: ProviderRegistry;
   circuitBreaker: CircuitBreaker;
+  quotaTracker: ProviderQuotaTracker;
   clock: Clock;
   deadline: Deadline;
   market: Market;

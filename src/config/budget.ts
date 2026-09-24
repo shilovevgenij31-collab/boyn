@@ -9,7 +9,20 @@
  * (Phase 4 brief §20) — `BUDGET_MONTHLY_USD_MAX` in env can override the
  * ceiling; `BUDGET_PROFILE` selects which profile's record limits apply.
  */
+import type { ProviderId } from "@/core/domain/provider.ts";
+
 export type BudgetProfileName = "FREE" | "LEAN" | "STANDARD";
+
+/** Conservative per-record cost estimate for the budget ledger, USD per
+ * 1,000 records — IMPLEMENTATION_PLAN.md §13's own researched PAYG rates
+ * (Apify ≈ $2.3/1K, Bright Data ≈ $1.50/1K). Production incident (Phase
+ * 8/9 hotfix Part D): no provider adapter ever wrote `cost_est_usd`, so
+ * the budget ledger silently read as $0 regardless of real usage — see
+ * providers/cost.ts, which is the only place these rates are consumed. */
+export const USD_PER_1K_RECORDS: Record<ProviderId, number> = {
+  apify: 2.3,
+  brightdata: 1.5,
+};
 
 export interface BudgetProfile {
   name: BudgetProfileName;

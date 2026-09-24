@@ -28,6 +28,7 @@ import {
   dailyReports,
   resultViews,
   telegramUpdates,
+  telegramUsers,
   hashtagTierEvents,
   quarantinedItems,
   appSettings,
@@ -174,6 +175,7 @@ export async function resetTelegramFixtureDb(db: TestDatabase): Promise<void> {
   await db.delete(quarantinedItems);
   await db.delete(resultViews);
   await db.delete(telegramUpdates);
+  await db.delete(telegramUsers);
   await db.delete(dailyReports);
   await db.delete(posts);
   await db.delete(providerJobs);

@@ -17,6 +17,8 @@ import { BrightDataProvider } from "@/providers/brightdata/provider.ts";
 import { buildRegistryConfigFromEnv, ProviderRegistry } from "@/providers/registry.ts";
 import { CircuitBreaker } from "@/providers/circuit-breaker.ts";
 import { DbCircuitBreakerStore } from "@/providers/db-circuit-breaker-store.ts";
+import { ProviderQuotaTracker } from "@/providers/quota-tracker.ts";
+import { DbProviderQuotaStore } from "@/providers/db-provider-quota-store.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
 import type { TickContext } from "./types.ts";
 
@@ -39,12 +41,14 @@ export function buildTickContext(db: Database, env: Env): TickContext {
 
   const registry = new ProviderRegistry(providers, buildRegistryConfigFromEnv(env));
   const circuitBreaker = new CircuitBreaker(new DbCircuitBreakerStore(db), systemClock);
+  const quotaTracker = new ProviderQuotaTracker(new DbProviderQuotaStore(db), systemClock);
   const deadlineMs = env.TICK_DEADLINE_MS ? Number(env.TICK_DEADLINE_MS) : DEFAULT_TICK_DEADLINE_MS;
 
   return {
     db,
     providers: registry,
     circuitBreaker,
+    quotaTracker,
     clock: systemClock,
     deadline: new Deadline(deadlineMs, systemClock),
     market: GLOBAL_MARKET,

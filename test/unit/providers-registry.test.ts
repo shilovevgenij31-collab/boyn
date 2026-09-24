@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CircuitBreaker, InMemoryCircuitBreakerStore } from "@/providers/circuit-breaker.ts";
+import { InMemoryProviderQuotaStore, ProviderQuotaTracker } from "@/providers/quota-tracker.ts";
 import { ProviderError } from "@/providers/errors.ts";
 import { DEFAULT_REGISTRY_CONFIG, ProviderRegistry } from "@/providers/registry.ts";
 import { FixtureProvider } from "@/providers/fixture/provider.ts";
 import type { RuntimeProviderId, SocialDataProvider } from "@/providers/provider.ts";
+import { FixedClock } from "@/lib/clock.ts";
 
 function makeProvider(id: RuntimeProviderId, overrides: Partial<ReturnType<SocialDataProvider["capabilities"]>> = {}): SocialDataProvider {
   const fixture = new FixtureProvider({ jobs: [] });
@@ -136,5 +138,62 @@ describe("ProviderRegistry.resolveAvailable (circuit-breaker aware)", () => {
     await breaker.recordFailure(key, err);
 
     await expect(registry.resolveAvailable("instagram", "DISCOVERY", breaker)).rejects.toThrow(ProviderError);
+  });
+});
+
+describe("ProviderRegistry.resolveAvailable (QUOTA-aware — Phase 8/9 hotfix Part C production incident regression)", () => {
+  it("without a quotaTracker, QUOTA state is invisible — behaves exactly as before (backward compatible)", async () => {
+    const apify = makeProvider("apify");
+    const brightdata = makeProvider("brightdata");
+    const registry = new ProviderRegistry({ apify, brightdata }, DEFAULT_REGISTRY_CONFIG);
+    const breaker = new CircuitBreaker(new InMemoryCircuitBreakerStore());
+
+    // No call to resolveAvailable's 4th param at all — mirrors every
+    // pre-existing caller (e.g. telegram/commands/refresh.ts).
+    const resolved = await registry.resolveAvailable("tiktok", "DISCOVERY", breaker);
+    expect(resolved.id).toBe("apify");
+  });
+
+  it("a QUOTA-exhausted primary does NOT trip the circuit breaker (stays closed) but IS routed around", async () => {
+    const apify = makeProvider("apify");
+    const brightdata = makeProvider("brightdata");
+    const registry = new ProviderRegistry({ apify, brightdata }, DEFAULT_REGISTRY_CONFIG);
+    const breaker = new CircuitBreaker(new InMemoryCircuitBreakerStore());
+    const quotaTracker = new ProviderQuotaTracker(new InMemoryProviderQuotaStore());
+
+    await quotaTracker.recordExhausted("apify", "tiktok", "DISCOVERY");
+
+    // The circuit is still closed — QUOTA is not a circuit-eligible failure.
+    expect(await breaker.isAvailable({ provider: "apify", platform: "tiktok", operation: "DISCOVERY" })).toBe(true);
+
+    const resolved = await registry.resolveAvailable("tiktok", "DISCOVERY", breaker, quotaTracker);
+    expect(resolved.id).toBe("brightdata");
+  });
+
+  it("Instagram (no fallback) throws when Apify is QUOTA-exhausted, even though its circuit stays closed", async () => {
+    const apify = makeProvider("apify");
+    const registry = new ProviderRegistry({ apify }, DEFAULT_REGISTRY_CONFIG);
+    const breaker = new CircuitBreaker(new InMemoryCircuitBreakerStore());
+    const quotaTracker = new ProviderQuotaTracker(new InMemoryProviderQuotaStore());
+
+    await quotaTracker.recordExhausted("apify", "instagram", "DISCOVERY");
+
+    await expect(registry.resolveAvailable("instagram", "DISCOVERY", breaker, quotaTracker)).rejects.toThrow(ProviderError);
+  });
+
+  it("once the quota cooldown expires, the primary is usable again", async () => {
+    const apify = makeProvider("apify");
+    const brightdata = makeProvider("brightdata");
+    const registry = new ProviderRegistry({ apify, brightdata }, DEFAULT_REGISTRY_CONFIG);
+    const breaker = new CircuitBreaker(new InMemoryCircuitBreakerStore());
+    const store = new InMemoryProviderQuotaStore();
+    const clock = new FixedClock(new Date("2026-01-01T00:00:00.000Z"));
+    const quotaTracker = new ProviderQuotaTracker(store, clock);
+
+    await quotaTracker.recordExhausted("apify", "tiktok", "DISCOVERY");
+    expect((await registry.resolveAvailable("tiktok", "DISCOVERY", breaker, quotaTracker)).id).toBe("brightdata");
+
+    clock.advanceMs(6 * 60 * 60 * 1000);
+    expect((await registry.resolveAvailable("tiktok", "DISCOVERY", breaker, quotaTracker)).id).toBe("apify");
   });
 });
